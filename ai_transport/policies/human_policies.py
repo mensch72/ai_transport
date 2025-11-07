@@ -24,7 +24,7 @@ class HumanPolicy(ABC):
         self.rng = np.random.RandomState(seed)
     
     @abstractmethod
-    def get_action(self, observation: Dict[str, Any], action_space_size: int) -> int:
+    def get_action(self, observation: Dict[str, Any], action_space_size: int):
         """
         Get action for the current observation.
         
@@ -33,7 +33,7 @@ class HumanPolicy(ABC):
             action_space_size: Size of the action space
             
         Returns:
-            Action index to take
+            Tuple of (action_index, justification_string)
         """
         pass
     
@@ -79,7 +79,7 @@ class RandomHumanPolicy(HumanPolicy):
             'departing': pass_prob_departing
         }
     
-    def get_action(self, observation: Dict[str, Any], action_space_size: int) -> int:
+    def get_action(self, observation: Dict[str, Any], action_space_size: int):
         """
         Get random action with step-type-specific passing probability.
         
@@ -88,20 +88,36 @@ class RandomHumanPolicy(HumanPolicy):
             action_space_size: Size of the action space
             
         Returns:
-            Action index: 0 (pass) with configured probability, otherwise random action
+            Tuple of (action_index, justification_string)
         """
         step_type = observation.get('step_type', 'departing')
         pass_prob = self.pass_probs.get(step_type, 0.5)
         
         # Decide whether to pass
         if self.rng.random() < pass_prob:
-            return 0  # Pass action is always index 0
+            return 0, "Passing (random choice)"
         
         # Otherwise, take random action from non-pass options
         if action_space_size <= 1:
-            return 0  # Only pass available
+            return 0, "Passing (only option)"
         
-        return self.rng.randint(1, action_space_size)
+        action = self.rng.randint(1, action_space_size)
+        
+        # Get action description from action_mapping if available
+        action_mapping = observation.get('action_mapping', {})
+        desc = action_mapping.get('description', {}).get(action, 'unknown')
+        detail = action_mapping.get('details', {}).get(action, '')
+        
+        if desc == 'unboard':
+            justification = "Unboarding (random choice)"
+        elif desc == 'board_vehicle':
+            justification = f"Boarding {detail} (random choice)"
+        elif desc == 'depart_edge':
+            justification = f"Walking to edge {detail} (random choice)"
+        else:
+            justification = f"Action {action} (random choice)"
+            
+        return action, justification
     
     def reset(self):
         """Reset policy state (no state to reset for random policy)."""
@@ -173,7 +189,7 @@ class TargetDestinationHumanPolicy(HumanPolicy):
             self.target_destination = self.rng.choice(self.nodes)
             self.last_real_time = real_time
     
-    def get_action(self, observation: Dict[str, Any], action_space_size: int) -> int:
+    def get_action(self, observation: Dict[str, Any], action_space_size: int):
         """
         Get action based on target destination.
         
@@ -186,7 +202,7 @@ class TargetDestinationHumanPolicy(HumanPolicy):
             action_space_size: Size of the action space
             
         Returns:
-            Action index
+            Tuple of (action_index, justification_string)
         """
         step_type = observation.get('step_type', 'departing')
         real_time = observation.get('real_time', 0.0)
@@ -201,12 +217,17 @@ class TargetDestinationHumanPolicy(HumanPolicy):
             return self._get_departing_action(observation, action_mapping, action_space_size)
         else:
             # Routing, unboarding, or on edge - pass
-            return 0
+            if step_type == 'routing':
+                return 0, "Passing (no action in routing step)"
+            elif step_type == 'unboarding':
+                return 0, "Passing (not aboard vehicle)"
+            else:
+                return 0, "Passing"
     
-    def _get_boarding_action(self, observation: Dict, action_mapping: Dict, action_space_size: int) -> int:
+    def _get_boarding_action(self, observation: Dict, action_mapping: Dict, action_space_size: int):
         """Choose vehicle whose destination is closest to target."""
         if action_space_size <= 1 or self.target_destination is None:
-            return 0  # Pass
+            return 0, "Passing (no target or no vehicles available)"
         
         # Get vehicle destinations from observation
         vehicle_destinations = observation.get('vehicle_destinations', {})
@@ -214,6 +235,7 @@ class TargetDestinationHumanPolicy(HumanPolicy):
         
         best_action = 0
         best_distance = float('inf')
+        best_vehicle = None
         
         for action_idx in range(1, action_space_size):
             vehicle_id = details.get(action_idx)
@@ -224,27 +246,32 @@ class TargetDestinationHumanPolicy(HumanPolicy):
                     if distance < best_distance:
                         best_distance = distance
                         best_action = action_idx
+                        best_vehicle = vehicle_id
         
-        return best_action if best_action > 0 else 0
+        if best_action > 0:
+            return best_action, f"Boarding {best_vehicle} (heading toward target {self.target_destination}, distance {best_distance:.1f})"
+        else:
+            return 0, f"Passing (no vehicles heading toward target {self.target_destination})"
     
-    def _get_departing_action(self, observation: Dict, action_mapping: Dict, action_space_size: int) -> int:
+    def _get_departing_action(self, observation: Dict, action_mapping: Dict, action_space_size: int):
         """Choose edge leading toward target destination."""
         if action_space_size <= 1 or self.target_destination is None:
-            return 0  # Pass
+            return 0, "Passing (no target or no edges available)"
         
         my_position = observation.get('my_position')
         if isinstance(my_position, tuple):
-            return 0  # Already on edge, must pass
+            return 0, "Passing (already on edge)"
         
         # Get current node
         current_node = my_position
         if current_node == self.target_destination:
-            return 0  # Already at target
+            return 0, f"Passing (already at target {self.target_destination})"
         
         # Find edge that leads toward target
         details = action_mapping.get('details', {})
         best_action = 0
         best_distance = float('inf')
+        best_edge = None
         
         for action_idx in range(1, action_space_size):
             edge = details.get(action_idx)
@@ -255,8 +282,12 @@ class TargetDestinationHumanPolicy(HumanPolicy):
                 if distance < best_distance:
                     best_distance = distance
                     best_action = action_idx
+                    best_edge = edge
         
-        return best_action if best_action > 0 else 0
+        if best_action > 0:
+            return best_action, f"Walking toward target {self.target_destination} via edge {best_edge}"
+        else:
+            return 0, f"Passing (no edge toward target {self.target_destination})"
     
     def reset(self):
         """Reset policy state (target destination and time)."""

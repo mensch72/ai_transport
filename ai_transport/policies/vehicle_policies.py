@@ -25,7 +25,7 @@ class VehiclePolicy(ABC):
         self.rng = np.random.RandomState(seed)
     
     @abstractmethod
-    def get_action(self, observation: Dict[str, Any], action_space_size: int) -> int:
+    def get_action(self, observation: Dict[str, Any], action_space_size: int):
         """
         Get action for the current observation.
         
@@ -34,7 +34,7 @@ class VehiclePolicy(ABC):
             action_space_size: Size of the action space
             
         Returns:
-            Action index to take
+            Tuple of (action_index, justification_string)
         """
         pass
     
@@ -71,7 +71,7 @@ class RandomVehiclePolicy(VehiclePolicy):
         self.pass_prob_routing = pass_prob_routing
         self.pass_prob_departing = pass_prob_departing
     
-    def get_action(self, observation: Dict[str, Any], action_space_size: int) -> int:
+    def get_action(self, observation: Dict[str, Any], action_space_size: int):
         """
         Get random action with step-type-specific passing probability.
         
@@ -80,7 +80,7 @@ class RandomVehiclePolicy(VehiclePolicy):
             action_space_size: Size of the action space
             
         Returns:
-            Action index: 0 (pass) with configured probability, otherwise random action
+            Tuple of (action_index, justification_string)
         """
         step_type = observation.get('step_type', 'departing')
         
@@ -94,13 +94,34 @@ class RandomVehiclePolicy(VehiclePolicy):
         
         # Decide whether to pass
         if self.rng.random() < pass_prob:
-            return 0  # Pass action is always index 0
+            if step_type == 'routing':
+                return 0, "Passing (keeping current destination, random choice)"
+            elif step_type == 'departing':
+                return 0, "Passing (staying at node, random choice)"
+            else:
+                return 0, "Passing (no action in this step)"
         
         # Otherwise, take random action from non-pass options
         if action_space_size <= 1:
-            return 0  # Only pass available
+            return 0, "Passing (only option)"
         
-        return self.rng.randint(1, action_space_size)
+        action = self.rng.randint(1, action_space_size)
+        
+        # Get action description from action_mapping if available
+        action_mapping = observation.get('action_mapping', {})
+        desc = action_mapping.get('description', {}).get(action, 'unknown')
+        detail = action_mapping.get('details', {}).get(action, '')
+        
+        if desc == 'set_destination_none':
+            justification = "Clearing destination (random choice)"
+        elif desc == 'set_destination_node':
+            justification = f"Setting destination to node {detail} (random choice)"
+        elif desc == 'depart_edge':
+            justification = f"Departing to edge {detail} (random choice)"
+        else:
+            justification = f"Action {action} (random choice)"
+            
+        return action, justification
     
     def reset(self):
         """Reset policy state (no state to reset for random policy)."""
@@ -209,7 +230,7 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
         
         return None
     
-    def get_action(self, observation: Dict[str, Any], action_space_size: int) -> int:
+    def get_action(self, observation: Dict[str, Any], action_space_size: int):
         """
         Get action based on shortest path to destination.
         
@@ -222,7 +243,7 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
             action_space_size: Size of the action space
             
         Returns:
-            Action index
+            Tuple of (action_index, justification_string)
         """
         step_type = observation.get('step_type', 'departing')
         
@@ -232,16 +253,21 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
             return self._get_departing_action(observation, action_space_size)
         else:
             # Unboarding, boarding, or on edge - pass
-            return 0
+            if step_type == 'unboarding':
+                return 0, "Passing (no action in unboarding step)"
+            elif step_type == 'boarding':
+                return 0, "Passing (no action in boarding step)"
+            else:
+                return 0, "Passing"
     
-    def _get_routing_action(self, observation: Dict, action_space_size: int) -> int:
+    def _get_routing_action(self, observation: Dict, action_space_size: int):
         """Set or update destination."""
         my_position = observation.get('my_position')
         action_mapping = observation.get('action_mapping', {})
         
         # If on edge, can't act
         if isinstance(my_position, tuple):
-            return 0
+            return 0, "Passing (on edge)"
         
         current_node = my_position
         
@@ -255,40 +281,44 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
             details = action_mapping.get('details', {})
             for action_idx in range(1, action_space_size):
                 if details.get(action_idx) == self.current_destination:
-                    return action_idx
+                    distance = self._euclidean_distance(current_node, self.current_destination)
+                    return action_idx, f"Setting destination to node {self.current_destination} (distance-weighted choice, {distance:.1f} units)"
         
         # Default: pass (or set to None)
-        return 0
+        return 0, "Passing (no destination or already set)"
     
-    def _get_departing_action(self, observation: Dict, action_space_size: int) -> int:
+    def _get_departing_action(self, observation: Dict, action_space_size: int):
         """Choose edge on shortest path to destination."""
         my_position = observation.get('my_position')
         action_mapping = observation.get('action_mapping', {})
         
         # If on edge, must pass
         if isinstance(my_position, tuple):
-            return 0
+            return 0, "Passing (already on edge)"
         
         current_node = my_position
         
         # If no destination, pass
         if self.current_destination is None:
-            return 0
+            return 0, "Passing (no destination set)"
         
         # Get next node on shortest path
         next_node = self._get_next_node_on_path(current_node, self.current_destination)
         if next_node is None:
-            return 0  # No path or already at destination
+            if current_node == self.current_destination:
+                return 0, f"Passing (already at destination {self.current_destination})"
+            else:
+                return 0, f"Passing (no path to destination {self.current_destination})"
         
         # Find action corresponding to edge (current_node, next_node)
         details = action_mapping.get('details', {})
         for action_idx in range(1, action_space_size):
             edge = details.get(action_idx)
             if edge and isinstance(edge, tuple) and edge == (current_node, next_node):
-                return action_idx
+                return action_idx, f"Taking shortest path to destination {self.current_destination} via edge {edge}"
         
         # Edge not found, pass
-        return 0
+        return 0, f"Passing (edge to next node {next_node} not available)"
     
     def reset(self):
         """Reset policy state (current destination)."""

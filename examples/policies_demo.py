@@ -85,16 +85,29 @@ def main():
                     print(f"   - {agent_id} destination: node {dest}")
             
             print()
+            print("   Actions taken:")
         
         # Get actions from policies
         actions = {}
+        action_justifications = {}
         for agent in env.agents:
             policy = policies.get(agent)
             if policy:
                 action_space_size = env.action_space(agent).n
-                actions[agent] = policy.get_action(obs[agent], action_space_size)
+                action, justification = policy.get_action(obs[agent], action_space_size)
+                actions[agent] = action
+                action_justifications[agent] = justification
             else:
                 actions[agent] = 0  # Pass
+                action_justifications[agent] = "Passing (no policy)"
+        
+        # Print actions with justifications
+        for agent in env.agents:
+            action_idx = actions[agent]
+            justification = action_justifications[agent]
+            print(f"   - {agent}: action {action_idx} - {justification}")
+        
+        print()
         
         # Step environment
         obs, rewards, terminations, truncations, infos = env.step(actions)
