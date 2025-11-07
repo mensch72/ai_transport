@@ -544,6 +544,7 @@ class parallel_env(ParallelEnv):
                     y = y1 + t * (y2 - y1)
                     
                     # For bidirectional edges, offset to correct lane
+                    u, v = edge[0], edge[1]
                     if self.network.has_edge(u, v) and self.network.has_edge(v, u):
                         # Calculate perpendicular offset for lane separation
                         dx = x2 - x1

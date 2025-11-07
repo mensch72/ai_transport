@@ -7,6 +7,7 @@ This example shows:
 3. Saving video as MP4
 """
 
+import os
 import numpy as np
 import networkx as nx
 from ai_transport import parallel_env
@@ -69,7 +70,6 @@ def main():
     HUMAN_WALK_PROB = 0.5  # Lower probability for more staggered departures
     
     # Create directory for debug frames
-    import os
     os.makedirs('debug_frames', exist_ok=True)
     frame_counter = 0
     
@@ -154,7 +154,7 @@ def main():
         if env.step_type == 'routing':  # Just finished departing step
             env.render()  # This captures the frame to video
             # Also save individual debug frame
-            debug_filename = f'debug_frames/frame_{frame_counter:04d}_cycle{cycle}_time{env.real_time:.2f}.png'
+            debug_filename = os.path.join('debug_frames', f'frame_{frame_counter:04d}_cycle{cycle}_time{env.real_time:.2f}.png')
             env.save_frame(debug_filename)
             frame_counter += 1
         
