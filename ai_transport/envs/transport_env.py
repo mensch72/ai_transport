@@ -62,6 +62,9 @@ def raw_env(render_mode=None, num_humans=2, num_vehicles=1, network=None,
 
 class parallel_env(ParallelEnv):
     metadata = {"render_modes": ["human"], "name": "transport_v0"}
+    
+    # Float comparison epsilon for coordinate/length comparisons
+    FLOAT_EPSILON = 1e-9
 
     def __init__(
         self,
@@ -430,6 +433,18 @@ class parallel_env(ParallelEnv):
                 if humans_aboard < capacity:
                     self.human_aboard[human] = vehicle
     
+    def _get_agent_speed(self, agent, edge_data):
+        """
+        Get the speed of an agent.
+        Vehicles use the edge's speed rating, humans use their own speed attribute.
+        """
+        if agent in self.vehicle_agents:
+            return edge_data['speed']
+        elif agent in self.human_agents:
+            return self.agent_attributes[agent]['speed']
+        else:
+            return 1.0  # Fallback
+    
     def _process_departing_actions(self, actions):
         """
         Process departing step: vehicles and humans (not aboard) at nodes can depart/walk into edges.
@@ -467,21 +482,23 @@ class parallel_env(ParallelEnv):
                 edge, coord = pos
                 edge_data = self.network[edge[0]][edge[1]]
                 edge_length = edge_data['length']
+                
+                # Validate coordinate is within valid range
+                if coord > edge_length + self.FLOAT_EPSILON:
+                    # Coordinate exceeds edge length - should not happen
+                    # Clamp to edge length
+                    coord = edge_length
+                    self.agent_positions[agent] = (edge, coord)
+                
                 remaining_distance = edge_length - coord
                 
-                # Determine agent's speed
-                if agent in self.vehicle_agents:
-                    # Vehicles use the edge's speed
-                    speed = edge_data['speed']
-                elif agent in self.human_agents:
-                    # Humans use their own speed
-                    speed = self.agent_attributes[agent]['speed']
-                else:
-                    speed = 1.0  # Fallback
-                
-                if speed > 0:
-                    duration = remaining_distance / speed
-                    remaining_durations.append(duration)
+                # Only compute duration if there's remaining distance
+                if remaining_distance > self.FLOAT_EPSILON:
+                    speed = self._get_agent_speed(agent, edge_data)
+                    
+                    if speed > 0:
+                        duration = remaining_distance / speed
+                        remaining_durations.append(duration)
         
         # If there are agents on edges, advance time and move them
         if remaining_durations:
@@ -495,20 +512,14 @@ class parallel_env(ParallelEnv):
                     edge, coord = pos
                     edge_data = self.network[edge[0]][edge[1]]
                     
-                    # Determine agent's speed
-                    if agent in self.vehicle_agents:
-                        speed = edge_data['speed']
-                    elif agent in self.human_agents:
-                        speed = self.agent_attributes[agent]['speed']
-                    else:
-                        speed = 1.0  # Fallback
+                    speed = self._get_agent_speed(agent, edge_data)
                     
                     # Update coordinate
                     new_coord = coord + speed * delta_t
                     edge_length = edge_data['length']
                     
                     # Check if agent has reached the end of the edge
-                    if abs(new_coord - edge_length) < 1e-9:  # Use small epsilon for float comparison
+                    if abs(new_coord - edge_length) < self.FLOAT_EPSILON:
                         # Agent arrives at target node
                         target_node = edge[1]
                         self.agent_positions[agent] = target_node
