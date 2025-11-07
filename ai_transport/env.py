@@ -26,6 +26,17 @@ class AITransportParallelEnv(ParallelEnv):
         "is_parallelizable": True,
     }
     
+    # Reward constants
+    PICKUP_REWARD = 0.5
+    DELIVERY_REWARD = 1.0
+    WAIT_PICKUP_REWARD = 0.3
+    WAIT_PENALTY = 0.1
+    SKIP_PENALTY = 0.2
+    CROWDED_STOP_PENALTY = 0.1
+    
+    # Destination constants
+    MIN_DESTINATION_OFFSET = 2
+    
     def __init__(
         self,
         num_buses: int = 3,
@@ -179,13 +190,13 @@ class AITransportParallelEnv(ParallelEnv):
                 if passengers_to_pick > 0:
                     self.bus_passengers[agent] += passengers_to_pick
                     self.stop_passengers[current_pos] -= passengers_to_pick
-                    rewards[agent] += passengers_to_pick * 0.5  # Reward for picking up passengers
+                    rewards[agent] += passengers_to_pick * self.PICKUP_REWARD
                     
                     # Assign destinations to new passengers (deterministic based on current state)
                     # Passengers want to go to stops ahead (at least 2 stops away)
                     for _ in range(passengers_to_pick):
                         # Destination is current position + (2 to num_stops/2) stops
-                        dest_offset = 2 + (self.timestep % (max(2, self.num_stops // 2)))
+                        dest_offset = self.MIN_DESTINATION_OFFSET + (self.timestep % (max(2, self.num_stops // 2)))
                         destination = (current_pos + dest_offset) % self.num_stops
                         self.bus_destinations[agent][destination] = \
                             self.bus_destinations[agent].get(destination, 0) + 1
@@ -198,7 +209,7 @@ class AITransportParallelEnv(ParallelEnv):
                 if next_pos in self.bus_destinations[agent]:
                     passengers_to_drop = self.bus_destinations[agent][next_pos]
                     self.bus_passengers[agent] -= passengers_to_drop
-                    rewards[agent] += passengers_to_drop * 1.0  # Higher reward for delivering passengers
+                    rewards[agent] += passengers_to_drop * self.DELIVERY_REWARD
                     del self.bus_destinations[agent][next_pos]
                 
             elif action == 1:  # Wait at current stop
@@ -211,16 +222,16 @@ class AITransportParallelEnv(ParallelEnv):
                 if passengers_to_pick > 0:
                     self.bus_passengers[agent] += passengers_to_pick
                     self.stop_passengers[current_pos] -= passengers_to_pick
-                    rewards[agent] += passengers_to_pick * 0.3  # Lower reward for waiting
+                    rewards[agent] += passengers_to_pick * self.WAIT_PICKUP_REWARD
                     
                     # Assign destinations to new passengers (same as action 0)
                     for _ in range(passengers_to_pick):
-                        dest_offset = 2 + (self.timestep % (max(2, self.num_stops // 2)))
+                        dest_offset = self.MIN_DESTINATION_OFFSET + (self.timestep % (max(2, self.num_stops // 2)))
                         destination = (current_pos + dest_offset) % self.num_stops
                         self.bus_destinations[agent][destination] = \
                             self.bus_destinations[agent].get(destination, 0) + 1
                 
-                rewards[agent] -= 0.1  # Small penalty for not moving
+                rewards[agent] -= self.WAIT_PENALTY
                 
             elif action == 2:  # Skip stop (express route)
                 # Move two stops ahead, checking for drop-offs at both intermediate and final stop
@@ -231,7 +242,7 @@ class AITransportParallelEnv(ParallelEnv):
                 if intermediate_pos in self.bus_destinations[agent]:
                     passengers_to_drop = self.bus_destinations[agent][intermediate_pos]
                     self.bus_passengers[agent] -= passengers_to_drop
-                    rewards[agent] += passengers_to_drop * 1.0
+                    rewards[agent] += passengers_to_drop * self.DELIVERY_REWARD
                     del self.bus_destinations[agent][intermediate_pos]
                 
                 self.bus_positions[agent] = final_pos
@@ -240,10 +251,10 @@ class AITransportParallelEnv(ParallelEnv):
                 if final_pos in self.bus_destinations[agent]:
                     passengers_to_drop = self.bus_destinations[agent][final_pos]
                     self.bus_passengers[agent] -= passengers_to_drop
-                    rewards[agent] += passengers_to_drop * 1.0
+                    rewards[agent] += passengers_to_drop * self.DELIVERY_REWARD
                     del self.bus_destinations[agent][final_pos]
                 
-                rewards[agent] -= 0.2  # Penalty for skipping stops
+                rewards[agent] -= self.SKIP_PENALTY
         
         # Add new passengers to stops
         for i in range(self.num_stops):
@@ -256,7 +267,7 @@ class AITransportParallelEnv(ParallelEnv):
         # Penalty for overcrowded stops
         for agent in self.agents:
             crowded_stops = np.sum(self.stop_passengers > self.crowded_stop_threshold)
-            rewards[agent] -= crowded_stops * 0.1
+            rewards[agent] -= crowded_stops * self.CROWDED_STOP_PENALTY
         
         # Get new observations
         observations = {agent: self._get_observation(agent) for agent in self.agents}
