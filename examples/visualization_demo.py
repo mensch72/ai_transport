@@ -61,6 +61,10 @@ def main():
     print("\n5. Running simulation...")
     num_cycles = 5  # Number of complete cycles through all step types
     
+    # Departure probabilities for visible motion
+    VEHICLE_DEPART_PROB = 0.8
+    HUMAN_WALK_PROB = 0.6
+    
     for cycle in range(num_cycles):
         # Go through each step type in sequence
         step_types = ['routing', 'unboarding', 'boarding', 'departing']
@@ -70,15 +74,15 @@ def main():
             actions = {}
             
             if env.step_type == 'routing':
-                # Vehicles set random destinations
+                # Vehicles set destinations (0=None, 1..N=node index)
                 for agent in env.agents:
                     if agent in env.vehicle_agents:
                         pos = env.agent_positions[agent]
                         if not isinstance(pos, tuple):  # At a node
-                            # Set destination to a random node
+                            # Randomly choose None or a node as destination
                             nodes = list(env.network.nodes())
                             dest_idx = np.random.randint(len(nodes) + 1)
-                            actions[agent] = dest_idx  # 0 = None, 1..N = nodes
+                            actions[agent] = dest_idx
                         else:
                             actions[agent] = 0
                     else:
@@ -125,15 +129,15 @@ def main():
                         actions[agent] = 0
             
             elif env.step_type == 'departing':
-                # Agents depart on random edges - ensure some actually depart
+                # Agents depart on edges - use high probabilities for visible motion
                 for agent in env.agents:
                     pos = env.agent_positions[agent]
                     if not isinstance(pos, tuple):  # At a node
                         if agent in env.vehicle_agents:
                             outgoing = list(env.network.out_edges(pos))
                             if outgoing:
-                                # Vehicles depart more frequently
-                                actions[agent] = 1 if np.random.random() < 0.8 else 0
+                                # Vehicles depart frequently for visible motion
+                                actions[agent] = 1 if np.random.random() < VEHICLE_DEPART_PROB else 0
                             else:
                                 actions[agent] = 0
                         elif agent in env.human_agents:
@@ -141,8 +145,8 @@ def main():
                             if aboard is None:  # Not aboard
                                 outgoing = list(env.network.out_edges(pos))
                                 if outgoing:
-                                    # Humans walk more frequently
-                                    actions[agent] = 1 if np.random.random() < 0.6 else 0
+                                    # Humans walk frequently for visible motion
+                                    actions[agent] = 1 if np.random.random() < HUMAN_WALK_PROB else 0
                                 else:
                                     actions[agent] = 0
                             else:

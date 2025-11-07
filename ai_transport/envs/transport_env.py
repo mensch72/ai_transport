@@ -555,9 +555,10 @@ class parallel_env(ParallelEnv):
             position_counts[pos_key] += 1
             
             # Add small perturbation if multiple agents at same location
+            # Arrange in a circle to make overlapping agents distinguishable
             if agent_idx > 0:
-                # Arrange in a circle around the position
-                angle = 2 * np.pi * agent_idx / max(position_counts[pos_key], 4)
+                # Use max count of 4 to ensure reasonable spacing even with many agents
+                angle = 2 * np.pi * agent_idx / max(4, position_counts[pos_key])
                 perturb_radius = 0.4  # Radius of perturbation circle
                 x += perturb_radius * np.cos(angle)
                 y += perturb_radius * np.sin(angle)
