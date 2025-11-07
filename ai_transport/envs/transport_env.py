@@ -1,5 +1,6 @@
 import functools
 from typing import Optional, Union, Tuple, Dict, Any
+import os
 
 import gymnasium
 import numpy as np
@@ -7,6 +8,11 @@ from gymnasium.spaces import Box, Dict as DictSpace, Discrete, Tuple as TupleSpa
 from gymnasium.utils import seeding
 import networkx as nx
 from scipy.spatial import Delaunay
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
+import matplotlib.pyplot as plt
+from matplotlib.patches import FancyArrowPatch, Rectangle, Circle
+from matplotlib.collections import LineCollection
 
 from pettingzoo import ParallelEnv
 from pettingzoo.utils import parallel_to_aec, wrappers
@@ -147,6 +153,11 @@ class parallel_env(ParallelEnv):
         
         # Initialize np_random_seed for action space
         self.np_random_seed = None
+        
+        # Rendering state
+        self.fig = None
+        self.ax = None
+        self.frames = []  # For video recording
         
         # State components (will be initialized in reset)
         self.real_time = None
@@ -396,15 +407,27 @@ class parallel_env(ParallelEnv):
 
     def render(self):
         """
-        Renders the environment. In human mode, it can print to terminal, open
-        up a graphical window, or open up some other display that a human can see and understand.
+        Renders the environment using the node coordinates.
+        - Vehicles shown as blue rectangles
+        - Humans shown as red dots
+        - Bidirectional roads shown with two separate arrows
         """
         if self.render_mode is None:
             gymnasium.logger.warn(
                 "You are calling render method without specifying any render mode."
             )
             return
-
+        
+        # Text-only rendering for backwards compatibility
+        if self.render_mode == "human" and not hasattr(self, '_use_graphical'):
+            self._render_text()
+            return
+        
+        # Graphical rendering
+        return self._render_graphical()
+    
+    def _render_text(self):
+        """Original text-based rendering"""
         if len(self.agents) > 0:
             print(f"Current state: real_time={self.real_time:.2f}, step_type={self.step_type}")
             for agent in self.agents:
@@ -422,6 +445,203 @@ class parallel_env(ParallelEnv):
                     print(f"    aboard: {aboard}")
         else:
             print("Environment terminated")
+    
+    def _render_graphical(self):
+        """Graphical rendering using matplotlib"""
+        # Create figure if it doesn't exist
+        if self.fig is None or self.ax is None:
+            self.fig, self.ax = plt.subplots(figsize=(12, 10))
+        
+        self.ax.clear()
+        
+        # Get node positions
+        pos = {}
+        for node in self.network.nodes():
+            if 'x' in self.network.nodes[node] and 'y' in self.network.nodes[node]:
+                pos[node] = (self.network.nodes[node]['x'], self.network.nodes[node]['y'])
+            else:
+                # Use spring layout if coordinates not available
+                pos = nx.spring_layout(self.network, seed=42)
+                break
+        
+        # Draw edges with separate arrows for bidirectional roads
+        for u, v in self.network.edges():
+            x1, y1 = pos[u]
+            x2, y2 = pos[v]
+            
+            # Check if edge is bidirectional
+            is_bidirectional = self.network.has_edge(v, u)
+            
+            if is_bidirectional and u < v:
+                # Draw two parallel arrows for bidirectional edges (only once)
+                # Calculate offset perpendicular to edge
+                dx = x2 - x1
+                dy = y2 - y1
+                length = np.sqrt(dx**2 + dy**2)
+                if length > 0:
+                    # Perpendicular unit vector
+                    px = -dy / length * 0.15
+                    py = dx / length * 0.15
+                    
+                    # First arrow (offset to one side)
+                    arrow1 = FancyArrowPatch(
+                        (x1 + px, y1 + py), (x2 + px, y2 + py),
+                        arrowstyle='->', mutation_scale=15, 
+                        linewidth=1.5, color='gray', alpha=0.6
+                    )
+                    self.ax.add_patch(arrow1)
+                    
+                    # Second arrow (offset to other side)
+                    arrow2 = FancyArrowPatch(
+                        (x2 - px, y2 - py), (x1 - px, y1 - py),
+                        arrowstyle='->', mutation_scale=15,
+                        linewidth=1.5, color='gray', alpha=0.6
+                    )
+                    self.ax.add_patch(arrow2)
+            elif not is_bidirectional:
+                # Draw single arrow for unidirectional edge
+                arrow = FancyArrowPatch(
+                    (x1, y1), (x2, y2),
+                    arrowstyle='->', mutation_scale=15,
+                    linewidth=1.5, color='gray', alpha=0.6
+                )
+                self.ax.add_patch(arrow)
+        
+        # Draw nodes
+        for node in self.network.nodes():
+            x, y = pos[node]
+            circle = Circle((x, y), radius=0.3, color='lightblue', 
+                          ec='black', linewidth=1.5, zorder=2)
+            self.ax.add_patch(circle)
+            self.ax.text(x, y, str(node), ha='center', va='center',
+                        fontsize=10, fontweight='bold', zorder=3)
+        
+        # Draw agents
+        for agent in self.agents:
+            agent_pos = self.agent_positions[agent]
+            
+            # Calculate agent's x, y coordinates
+            if isinstance(agent_pos, tuple):
+                # Agent on edge
+                edge, coord = agent_pos
+                x1, y1 = pos[edge[0]]
+                x2, y2 = pos[edge[1]]
+                edge_length = self.network[edge[0]][edge[1]]['length']
+                
+                if edge_length > 0:
+                    t = coord / edge_length
+                    x = x1 + t * (x2 - x1)
+                    y = y1 + t * (y2 - y1)
+                else:
+                    x, y = x1, y1
+            else:
+                # Agent at node
+                x, y = pos[agent_pos]
+            
+            # Draw agent based on type
+            if agent in self.vehicle_agents:
+                # Vehicle as blue rectangle
+                rect = Rectangle((x - 0.25, y - 0.15), 0.5, 0.3,
+                               color='blue', ec='darkblue', linewidth=1.5,
+                               zorder=4, alpha=0.8)
+                self.ax.add_patch(rect)
+                
+                # Show destination if set
+                dest = self.vehicle_destinations.get(agent)
+                if dest is not None:
+                    dest_x, dest_y = pos[dest]
+                    self.ax.plot([x, dest_x], [y, dest_y], 
+                               'b--', alpha=0.3, linewidth=1, zorder=1)
+            
+            elif agent in self.human_agents:
+                # Check if human is aboard a vehicle
+                aboard = self.human_aboard.get(agent)
+                if aboard is None:
+                    # Human not aboard - show as red dot
+                    circle = Circle((x, y), radius=0.15, color='red',
+                                  ec='darkred', linewidth=1.5, zorder=5)
+                    self.ax.add_patch(circle)
+                # If aboard, don't draw separately (they're with the vehicle)
+        
+        # Add title with time and step type
+        self.ax.set_title(f'Transport Network - Time: {self.real_time:.2f}, Step: {self.step_type}',
+                         fontsize=14, fontweight='bold')
+        
+        self.ax.set_aspect('equal')
+        self.ax.axis('off')
+        
+        # Set axis limits with padding
+        if pos:
+            x_vals = [p[0] for p in pos.values()]
+            y_vals = [p[1] for p in pos.values()]
+            x_margin = (max(x_vals) - min(x_vals)) * 0.1 + 1
+            y_margin = (max(y_vals) - min(y_vals)) * 0.1 + 1
+            self.ax.set_xlim(min(x_vals) - x_margin, max(x_vals) + x_margin)
+            self.ax.set_ylim(min(y_vals) - y_margin, max(y_vals) + y_margin)
+        
+        # Add legend
+        from matplotlib.patches import Patch
+        legend_elements = [
+            Patch(facecolor='blue', edgecolor='darkblue', label='Vehicle'),
+            Patch(facecolor='red', edgecolor='darkred', label='Human'),
+            Patch(facecolor='lightblue', edgecolor='black', label='Node')
+        ]
+        self.ax.legend(handles=legend_elements, loc='upper right')
+        
+        plt.tight_layout()
+        
+        # Store frame for video
+        if hasattr(self, '_recording') and self._recording:
+            # Convert plot to image
+            self.fig.canvas.draw()
+            # Get the RGBA buffer from the figure
+            buf = self.fig.canvas.buffer_rgba()
+            frame = np.asarray(buf)
+            # Convert RGBA to RGB
+            frame = frame[:, :, :3]
+            self.frames.append(frame)
+        
+        return self.fig
+    
+    def enable_rendering(self, mode='graphical'):
+        """Enable graphical or text rendering"""
+        if mode == 'graphical':
+            self._use_graphical = True
+        else:
+            self._use_graphical = False
+    
+    def start_video_recording(self):
+        """Start recording frames for video"""
+        self._recording = True
+        self.frames = []
+        self.enable_rendering('graphical')
+    
+    def save_video(self, filename='transport_video.mp4', fps=5):
+        """
+        Save recorded frames as MP4 video.
+        
+        Args:
+            filename: Output filename
+            fps: Frames per second
+        """
+        if not self.frames:
+            print("No frames recorded. Call start_video_recording() first.")
+            return
+        
+        try:
+            import imageio
+            imageio.mimsave(filename, self.frames, fps=fps)
+            print(f"Video saved to {filename}")
+            self._recording = False
+            self.frames = []
+        except ImportError:
+            print("imageio package required for video recording. Install with: pip install imageio[ffmpeg]")
+    
+    def save_frame(self, filename='frame.png'):
+        """Save current frame as PNG image"""
+        if self.fig is not None:
+            self.fig.savefig(filename, dpi=150, bbox_inches='tight')
+            print(f"Frame saved to {filename}")
 
     def close(self):
         """
@@ -429,7 +649,10 @@ class parallel_env(ParallelEnv):
         or any other environment data which should not be kept around after the
         user is no longer using the environment.
         """
-        pass
+        if self.fig is not None:
+            plt.close(self.fig)
+            self.fig = None
+            self.ax = None
 
     def reset(self, seed=None, options=None):
         """
@@ -662,10 +885,12 @@ class parallel_env(ParallelEnv):
                 # Only humans at nodes and not aboard can board
                 if pos is not None and not isinstance(pos, tuple) and aboard is None:
                     # Find vehicles at same node
-                    vehicles_at_node = [
-                        v for v in self.vehicle_agents 
-                        if self.agent_positions.get(v) == pos
-                    ]
+                    vehicles_at_node = []
+                    for v in self.vehicle_agents:
+                        v_pos = self.agent_positions.get(v)
+                        # Compare positions carefully (both should be nodes)
+                        if v_pos is not None and not isinstance(v_pos, tuple) and v_pos == pos:
+                            vehicles_at_node.append(v)
                     # action - 1 gives the index in vehicles_at_node list
                     vehicle_idx = action - 1
                     if 0 <= vehicle_idx < len(vehicles_at_node):

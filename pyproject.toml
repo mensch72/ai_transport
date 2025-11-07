@@ -31,12 +31,16 @@ dependencies = [
     "numpy>=1.21.0",
     "networkx>=2.6.0",
     "scipy>=1.7.0",
+    "matplotlib>=3.5.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
+]
+video = [
+    "imageio[ffmpeg]>=2.9.0",
 ]
 
 [project.urls]

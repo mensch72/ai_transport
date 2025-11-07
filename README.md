@@ -210,6 +210,55 @@ See `examples/observations_demo.py` for a complete demonstration.
 
 All rewards are constantly zero. The preference and goal logic will be implemented outside the environment class based on observations.
 
+## Visualization
+
+The environment provides graphical rendering with matplotlib:
+
+### Graphical Rendering
+
+```python
+env = parallel_env(num_humans=3, num_vehicles=2, network=G, render_mode="human")
+env.reset()
+env.enable_rendering('graphical')
+env.render()  # Displays the network graphically
+
+# Save current frame
+env.save_frame('current_state.png')
+```
+
+**Visual representation:**
+- **Nodes**: Light blue circles with node IDs
+- **Vehicles**: Blue rectangles
+- **Humans**: Red dots (not shown if aboard a vehicle)
+- **Edges**: 
+  - Unidirectional: Single gray arrow
+  - Bidirectional: Two parallel arrows (one in each direction)
+- **Destinations**: Dashed blue lines from vehicles to their destinations
+
+### Video Recording
+
+Record a simulation as an MP4 video:
+
+```python
+env.start_video_recording()
+
+# Run simulation
+for step in range(num_steps):
+    actions = {agent: env.action_space(agent).sample() for agent in env.agents}
+    obs, rewards, terms, truncs, infos = env.step(actions)
+    env.render()  # Records frame
+
+# Save video
+env.save_video('simulation.mp4', fps=5)
+```
+
+**Note**: Video recording requires `imageio[ffmpeg]`:
+```bash
+pip install imageio[ffmpeg]
+```
+
+See `examples/visualization_demo.py` for a complete demonstration.
+
 ## Package Structure
 
 ```
@@ -250,4 +299,5 @@ python examples/action_spaces_demo.py
 python examples/step_logic_demo.py
 python examples/observations_demo.py
 python examples/random_network_demo.py
+python examples/visualization_demo.py
 ```

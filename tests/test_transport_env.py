@@ -869,3 +869,89 @@ def test_random_network_integration():
     
     # Should complete without errors
     assert len(obs) == len(test_env2.agents)
+
+
+def test_graphical_rendering():
+    """Test graphical rendering"""
+    test_env = parallel_env(num_humans=2, num_vehicles=1, render_mode="human")
+    test_env.reset()
+    
+    # Enable graphical rendering
+    test_env.enable_rendering('graphical')
+    
+    # Should not raise an error
+    fig = test_env.render()
+    assert fig is not None
+    
+    test_env.close()
+
+
+def test_save_frame():
+    """Test saving a frame"""
+    import tempfile
+    import os
+    
+    test_env = parallel_env(num_humans=1, num_vehicles=1, render_mode="human")
+    test_env.reset()
+    test_env.enable_rendering('graphical')
+    test_env.render()
+    
+    # Save to temporary file
+    with tempfile.TemporaryDirectory() as tmpdir:
+        filepath = os.path.join(tmpdir, 'test_frame.png')
+        test_env.save_frame(filepath)
+        
+        # Check file was created
+        assert os.path.exists(filepath)
+        assert os.path.getsize(filepath) > 0
+    
+    test_env.close()
+
+
+def test_video_recording():
+    """Test video recording functionality"""
+    test_env = parallel_env(num_humans=1, num_vehicles=1, render_mode="human")
+    test_env.reset()
+    
+    # Start recording
+    test_env.start_video_recording()
+    
+    # Render a few frames
+    for _ in range(3):
+        test_env.render()
+        test_env.step_type = 'routing'
+        actions = {agent: 0 for agent in test_env.agents}
+        test_env.step(actions)
+    
+    # Check frames were recorded
+    assert len(test_env.frames) > 0
+    
+    test_env.close()
+
+
+def test_text_rendering():
+    """Test text rendering still works"""
+    test_env = parallel_env(num_humans=1, num_vehicles=1, render_mode="human")
+    test_env.reset()
+    
+    # Text rendering should not raise error
+    test_env._render_text()
+    
+    test_env.close()
+
+
+def test_render_with_random_network():
+    """Test rendering with random 2D network"""
+    test_env = parallel_env(num_humans=2, num_vehicles=1, render_mode="human")
+    network = test_env.create_random_2d_network(num_nodes=5, seed=42)
+    
+    test_env = parallel_env(num_humans=2, num_vehicles=1, network=network, render_mode="human")
+    test_env.reset()
+    test_env.initialize_random_positions(seed=42)
+    
+    test_env.enable_rendering('graphical')
+    fig = test_env.render()
+    
+    assert fig is not None
+    
+    test_env.close()
