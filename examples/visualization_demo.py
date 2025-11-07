@@ -19,19 +19,19 @@ def main():
     
     # Create a random 2D network
     print("\n1. Creating random 2D network...")
-    env = parallel_env(num_humans=3, num_vehicles=2)
+    env = parallel_env(num_humans=4, num_vehicles=2)
     network = env.create_random_2d_network(
-        num_nodes=8,
-        bidirectional_prob=0.4,
-        speed_mean=5.0,
+        num_nodes=10,
+        bidirectional_prob=0.5,
+        speed_mean=3.0,  # Slower speeds for more visible motion
         capacity_mean=10.0,
-        coord_std=10.0,
+        coord_std=15.0,  # Larger spread for longer edges
         seed=42
     )
     
     # Create environment with the network
     env = parallel_env(
-        num_humans=3,
+        num_humans=4,
         num_vehicles=2,
         network=network,
         render_mode="human"
@@ -57,118 +57,102 @@ def main():
     print("\n4. Starting video recording...")
     env.start_video_recording()
     
-    # Run simulation for several steps
+    # Run simulation - environment automatically cycles through step types
     print("\n5. Running simulation...")
-    num_steps = 30  # Total number of departing steps (with visible motion)
+    num_cycles = 40  # Number of complete step type cycles
     
-    # Departure probabilities for visible motion
-    VEHICLE_DEPART_PROB = 0.9
-    HUMAN_WALK_PROB = 0.7
+    # Action probabilities for visible motion
+    VEHICLE_ROUTE_PROB = 0.8  # Probability vehicle sets a destination  
+    UNBOARD_PROB = 0.2  # Probability human unboards
+    BOARD_PROB = 0.5  # Probability human boards
+    VEHICLE_DEPART_PROB = 0.6  # Lower probability for more staggered departures
+    HUMAN_WALK_PROB = 0.5  # Lower probability for more staggered departures
     
-    for step_num in range(num_steps):
-        # Cycle through step types: routing -> unboarding -> boarding -> departing
-        # Only render frames after departing (when motion happens)
-        step_types = ['routing', 'unboarding', 'boarding', 'departing']
+    for cycle in range(num_cycles):
+        # Take actions for current step type (environment cycles automatically)
+        current_step = env.step_type
+        actions = {}
         
-        for step_type in step_types:
-            env.step_type = step_type
-            actions = {}
-            
-            if env.step_type == 'routing':
-                # Vehicles set destinations (0=None, 1..N=node index)
-                for agent in env.agents:
-                    if agent in env.vehicle_agents:
-                        pos = env.agent_positions[agent]
-                        if not isinstance(pos, tuple):  # At a node
-                            # Randomly choose None or a node as destination
-                            nodes = list(env.network.nodes())
-                            dest_idx = np.random.randint(len(nodes) + 1)
-                            actions[agent] = dest_idx
-                        else:
-                            actions[agent] = 0
-                    else:
-                        actions[agent] = 0
-            
-            elif env.step_type == 'unboarding':
-                # Some humans unboard
-                for agent in env.agents:
-                    if agent in env.human_agents:
-                        aboard = env.human_aboard.get(agent)
-                        if aboard is not None:
-                            vehicle_pos = env.agent_positions[aboard]
-                            if not isinstance(vehicle_pos, tuple):  # Vehicle at node
-                                # Randomly unboard or stay
-                                actions[agent] = 1 if np.random.random() < 0.4 else 0
-                            else:
-                                actions[agent] = 0
-                        else:
-                            actions[agent] = 0
-                    else:
-                        actions[agent] = 0
-            
-            elif env.step_type == 'boarding':
-                # Humans try to board
-                for agent in env.agents:
-                    if agent in env.human_agents:
-                        pos = env.agent_positions[agent]
-                        aboard = env.human_aboard.get(agent)
-                        if not isinstance(pos, tuple) and aboard is None:  # At node, not aboard
-                            # Find vehicles at same node
-                            vehicles_here = []
-                            for v in env.vehicle_agents:
-                                v_pos = env.agent_positions[v]
-                                if not isinstance(v_pos, tuple) and v_pos == pos:
-                                    vehicles_here.append(v)
-                            if vehicles_here:
-                                # Try to board first vehicle
-                                actions[agent] = 1
-                            else:
-                                actions[agent] = 0
-                        else:
-                            actions[agent] = 0
-                    else:
-                        actions[agent] = 0
-            
-            elif env.step_type == 'departing':
-                # Agents depart on edges - use high probabilities for visible motion
-                for agent in env.agents:
+        if current_step == 'routing':
+            # Vehicles set destinations
+            for agent in env.agents:
+                if agent in env.vehicle_agents:
                     pos = env.agent_positions[agent]
-                    if not isinstance(pos, tuple):  # At a node
-                        if agent in env.vehicle_agents:
-                            outgoing = list(env.network.out_edges(pos))
-                            if outgoing:
-                                # Vehicles depart frequently for visible motion
-                                actions[agent] = 1 if np.random.random() < VEHICLE_DEPART_PROB else 0
-                            else:
-                                actions[agent] = 0
-                        elif agent in env.human_agents:
-                            aboard = env.human_aboard.get(agent)
-                            if aboard is None:  # Not aboard
-                                outgoing = list(env.network.out_edges(pos))
-                                if outgoing:
-                                    # Humans walk frequently for visible motion
-                                    actions[agent] = 1 if np.random.random() < HUMAN_WALK_PROB else 0
-                                else:
-                                    actions[agent] = 0
-                            else:
-                                actions[agent] = 0
+                    if not isinstance(pos, tuple) and np.random.random() < VEHICLE_ROUTE_PROB:
+                        nodes = list(env.network.nodes())
+                        dest_idx = np.random.randint(1, len(nodes) + 1)  # 1..N (not 0/None)
+                        actions[agent] = dest_idx
                     else:
                         actions[agent] = 0
-            
-            # Take step
-            obs, rewards, terms, truncs, infos = env.step(actions)
-            
-            # Only render after departing step (when actual motion/time advance happens)
-            # This avoids recording many identical frames
-            if env.step_type == 'departing':
-                env.render()
+                else:
+                    actions[agent] = 0
         
-        if (step_num + 1) % 10 == 0:
-            print(f"   Step {step_num + 1}/{num_steps} completed (time: {env.real_time:.2f})")
+        elif current_step == 'unboarding':
+            # Humans unboard
+            for agent in env.agents:
+                if agent in env.human_agents:
+                    aboard = env.human_aboard.get(agent)
+                    if aboard is not None:
+                        vehicle_pos = env.agent_positions[aboard]
+                        if not isinstance(vehicle_pos, tuple) and np.random.random() < UNBOARD_PROB:
+                            actions[agent] = 1
+                        else:
+                            actions[agent] = 0
+                    else:
+                        actions[agent] = 0
+                else:
+                    actions[agent] = 0
+        
+        elif current_step == 'boarding':
+            # Humans board
+            for agent in env.agents:
+                if agent in env.human_agents:
+                    pos = env.agent_positions[agent]
+                    aboard = env.human_aboard.get(agent)
+                    if not isinstance(pos, tuple) and aboard is None:
+                        # Find vehicles at same node
+                        vehicles_here = [v for v in env.vehicle_agents
+                                       if not isinstance(env.agent_positions[v], tuple) 
+                                       and env.agent_positions[v] == pos]
+                        if vehicles_here and np.random.random() < BOARD_PROB:
+                            actions[agent] = 1
+                        else:
+                            actions[agent] = 0
+                    else:
+                        actions[agent] = 0
+                else:
+                    actions[agent] = 0
+        
+        elif current_step == 'departing':
+            # Agents depart on edges
+            for agent in env.agents:
+                pos = env.agent_positions[agent]
+                if not isinstance(pos, tuple):  # At node
+                    outgoing = list(env.network.out_edges(pos))
+                    if outgoing:
+                        if agent in env.vehicle_agents:
+                            actions[agent] = 1 if np.random.random() < VEHICLE_DEPART_PROB else 0
+                        elif agent in env.human_agents and env.human_aboard.get(agent) is None:
+                            actions[agent] = 1 if np.random.random() < HUMAN_WALK_PROB else 0
+                        else:
+                            actions[agent] = 0
+                    else:
+                        actions[agent] = 0
+                else:
+                    actions[agent] = 0
+        
+        # Take step (environment auto-cycles to next step type)
+        obs, rewards, terms, truncs, infos = env.step(actions)
+        
+        # Render frame (captures all step types, showing the progression)
+        env.render()
+        
+        if (cycle + 1) % 10 == 0:
+            print(f"   Cycle {cycle + 1}/{num_cycles} completed (time: {env.real_time:.2f}, step: {current_step})")
     
     # Save video
     print("\n6. Saving video...")
-    env.save_video('transport_simulation.mp4', fps=3)
+    env.save_video('transport_simulation.mp4', fps=5)
     
     # Save final frame
     print("\n7. Saving final frame...")
@@ -185,6 +169,8 @@ def main():
     print("  - transport_initial.png (initial state)")
     print("  - transport_final.png (final state)")
     print("  - transport_simulation.mp4 (full simulation video)")
+    print(f"\nVideo contains {40} frames showing progression through {40} step cycles.")
+    print("Step types cycle: routing → unboarding → boarding → departing")
     print("\nNote: To enable video recording, install imageio with:")
     print("  pip install imageio[ffmpeg]")
 

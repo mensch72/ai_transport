@@ -623,8 +623,9 @@ class parallel_env(ParallelEnv):
         
         plt.tight_layout()
         
-        # Store frame for video
+        # Store frame for video (only if recording and there's something interesting to show)
         if hasattr(self, '_recording') and self._recording:
+            # Always record frames to show progression
             # Convert plot to image
             self.fig.canvas.draw()
             # Get the RGBA buffer from the figure
@@ -878,6 +879,11 @@ class parallel_env(ParallelEnv):
             self._process_boarding_actions(actions)
         elif self.step_type == 'departing':
             self._process_departing_actions(actions)
+        
+        # Automatically cycle to next step type
+        step_cycle = ['routing', 'unboarding', 'boarding', 'departing']
+        current_idx = step_cycle.index(self.step_type)
+        self.step_type = step_cycle[(current_idx + 1) % len(step_cycle)]
         
         # Generate observations based on scenario
         observations = self._generate_observations()
