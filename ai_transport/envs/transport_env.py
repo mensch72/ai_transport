@@ -8,11 +8,6 @@ from gymnasium.spaces import Box, Dict as DictSpace, Discrete, Tuple as TupleSpa
 from gymnasium.utils import seeding
 import networkx as nx
 from scipy.spatial import Delaunay
-import matplotlib
-matplotlib.use('Agg')  # Use non-interactive backend
-import matplotlib.pyplot as plt
-from matplotlib.patches import FancyArrowPatch, Rectangle, Circle
-from matplotlib.collections import LineCollection
 
 from pettingzoo import ParallelEnv
 from pettingzoo.utils import parallel_to_aec, wrappers
@@ -448,6 +443,16 @@ class parallel_env(ParallelEnv):
     
     def _render_graphical(self):
         """Graphical rendering using matplotlib"""
+        # Import matplotlib only when needed
+        try:
+            import matplotlib
+            matplotlib.use('Agg')  # Use non-interactive backend
+            import matplotlib.pyplot as plt
+            from matplotlib.patches import FancyArrowPatch, Rectangle, Circle, Patch
+        except ImportError:
+            print("matplotlib is required for graphical rendering. Install with: pip install matplotlib")
+            return None
+        
         # Create figure if it doesn't exist
         if self.fig is None or self.ax is None:
             self.fig, self.ax = plt.subplots(figsize=(12, 10))
@@ -580,7 +585,6 @@ class parallel_env(ParallelEnv):
             self.ax.set_ylim(min(y_vals) - y_margin, max(y_vals) + y_margin)
         
         # Add legend
-        from matplotlib.patches import Patch
         legend_elements = [
             Patch(facecolor='blue', edgecolor='darkblue', label='Vehicle'),
             Patch(facecolor='red', edgecolor='darkred', label='Human'),
@@ -632,10 +636,12 @@ class parallel_env(ParallelEnv):
             import imageio
             imageio.mimsave(filename, self.frames, fps=fps)
             print(f"Video saved to {filename}")
-            self._recording = False
-            self.frames = []
         except ImportError:
             print("imageio package required for video recording. Install with: pip install imageio[ffmpeg]")
+        finally:
+            # Always reset state
+            self._recording = False
+            self.frames = []
     
     def save_frame(self, filename='frame.png'):
         """Save current frame as PNG image"""
@@ -650,7 +656,11 @@ class parallel_env(ParallelEnv):
         user is no longer using the environment.
         """
         if self.fig is not None:
-            plt.close(self.fig)
+            try:
+                import matplotlib.pyplot as plt
+                plt.close(self.fig)
+            except ImportError:
+                pass
             self.fig = None
             self.ax = None
 
