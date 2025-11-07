@@ -169,7 +169,7 @@ def main():
     print("  - transport_initial.png (initial state)")
     print("  - transport_final.png (final state)")
     print("  - transport_simulation.mp4 (full simulation video)")
-    print(f"\nVideo contains {40} frames showing progression through {40} step cycles.")
+    print(f"\nVideo contains {num_cycles} frames showing progression through {num_cycles} step cycles.")
     print("Step types cycle: routing → unboarding → boarding → departing")
     print("\nNote: To enable video recording, install imageio with:")
     print("  pip install imageio[ffmpeg]")

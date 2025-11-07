@@ -880,7 +880,7 @@ class parallel_env(ParallelEnv):
         elif self.step_type == 'departing':
             self._process_departing_actions(actions)
         
-        # Automatically cycle to next step type
+        # Automatically cycle to next step type AFTER processing current step
         step_cycle = ['routing', 'unboarding', 'boarding', 'departing']
         current_idx = step_cycle.index(self.step_type)
         self.step_type = step_cycle[(current_idx + 1) % len(step_cycle)]
