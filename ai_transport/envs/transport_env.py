@@ -371,7 +371,7 @@ class parallel_env(ParallelEnv):
                     # Find vehicles at the same node
                     vehicles_at_node = [
                         v for v in self.vehicle_agents 
-                        if self.agent_positions.get(v) == pos
+                        if not isinstance(self.agent_positions.get(v), tuple) and self.agent_positions.get(v) == pos
                     ]
                     # Actions: 0=pass, 1..N=board vehicle 0, 1, ..., N-1
                     return Discrete(len(vehicles_at_node) + 1, seed=self.np_random_seed)
@@ -926,7 +926,7 @@ class parallel_env(ParallelEnv):
                     # Human at node can board vehicles at same node
                     vehicles_at_node = [
                         v for v in self.vehicle_agents 
-                        if self.agent_positions.get(v) == pos
+                        if not isinstance(self.agent_positions.get(v), tuple) and self.agent_positions.get(v) == pos
                     ]
                     mapping['description'][0] = 'pass'
                     mapping['details'][0] = None
