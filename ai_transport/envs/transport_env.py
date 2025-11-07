@@ -11,7 +11,8 @@ from pettingzoo import ParallelEnv
 from pettingzoo.utils import parallel_to_aec, wrappers
 
 
-def env(render_mode=None, num_humans=2, num_vehicles=1, network=None):
+def env(render_mode=None, num_humans=2, num_vehicles=1, network=None,
+        human_speed=1.0, vehicle_speed=2.0, vehicle_capacity=4, vehicle_fuel_use=1.0):
     """
     The env function often wraps the environment in wrappers by default.
     You can find full documentation for these methods
@@ -22,7 +23,11 @@ def env(render_mode=None, num_humans=2, num_vehicles=1, network=None):
         render_mode=internal_render_mode,
         num_humans=num_humans,
         num_vehicles=num_vehicles,
-        network=network
+        network=network,
+        human_speed=human_speed,
+        vehicle_speed=vehicle_speed,
+        vehicle_capacity=vehicle_capacity,
+        vehicle_fuel_use=vehicle_fuel_use
     )
     # This wrapper is only for environments which print results to the terminal
     if render_mode == "ansi":
@@ -35,7 +40,8 @@ def env(render_mode=None, num_humans=2, num_vehicles=1, network=None):
     return env
 
 
-def raw_env(render_mode=None, num_humans=2, num_vehicles=1, network=None):
+def raw_env(render_mode=None, num_humans=2, num_vehicles=1, network=None,
+            human_speed=1.0, vehicle_speed=2.0, vehicle_capacity=4, vehicle_fuel_use=1.0):
     """
     To support the AEC API, the raw_env() function just uses the from_parallel
     function to convert from a ParallelEnv to an AEC env
@@ -44,7 +50,11 @@ def raw_env(render_mode=None, num_humans=2, num_vehicles=1, network=None):
         render_mode=render_mode,
         num_humans=num_humans,
         num_vehicles=num_vehicles,
-        network=network
+        network=network,
+        human_speed=human_speed,
+        vehicle_speed=vehicle_speed,
+        vehicle_capacity=vehicle_capacity,
+        vehicle_fuel_use=vehicle_fuel_use
     )
     env = parallel_to_aec(env)
     return env
@@ -114,6 +124,9 @@ class parallel_env(ParallelEnv):
         self._validate_network()
         
         self.render_mode = render_mode
+        
+        # Initialize np_random_seed for action space
+        self.np_random_seed = None
         
         # State components (will be initialized in reset)
         self.real_time = None
