@@ -68,20 +68,7 @@ def main():
     print()
     
     for step in range(20):
-        # Get actions from policies
-        actions = {}
-        for agent in env.agents:
-            policy = policies.get(agent)
-            if policy:
-                action_space_size = env.action_space(agent).n
-                actions[agent] = policy.get_action(obs[agent], action_space_size)
-            else:
-                actions[agent] = 0  # Pass
-        
-        # Step environment
-        obs, rewards, terminations, truncations, infos = env.step(actions)
-        
-        # Print summary every 4 steps
+        # Print summary every 4 steps (before taking action)
         if step % 4 == 0:
             print(f"   Step {step}:")
             print(f"   - Step type: {env.step_type}")
@@ -98,6 +85,19 @@ def main():
                     print(f"   - {agent_id} destination: node {dest}")
             
             print()
+        
+        # Get actions from policies
+        actions = {}
+        for agent in env.agents:
+            policy = policies.get(agent)
+            if policy:
+                action_space_size = env.action_space(agent).n
+                actions[agent] = policy.get_action(obs[agent], action_space_size)
+            else:
+                actions[agent] = 0  # Pass
+        
+        # Step environment
+        obs, rewards, terminations, truncations, infos = env.step(actions)
     
     print("="*70)
     print("Policy demonstration complete!")
