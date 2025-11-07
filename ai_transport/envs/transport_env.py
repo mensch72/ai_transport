@@ -194,7 +194,6 @@ class parallel_env(ParallelEnv):
                 pos = self.agent_positions.get(agent)
                 # Only vehicles at nodes can act
                 if pos is not None and not isinstance(pos, tuple):
-                    # Actions: 0=keep current, then one action per node to set as destination
                     # Index 0 = set destination to None
                     # Index 1..N = set destination to node 0, 1, ..., N-1
                     num_nodes = len(self.network.nodes())
