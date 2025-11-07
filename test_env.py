@@ -123,7 +123,7 @@ def test_episode_termination():
 
 def test_different_actions():
     """Test that different actions produce different results."""
-    env = parallel_env(num_buses=1, num_stops=5, render_mode=None)
+    env = parallel_env(num_buses=1, num_stops=5)
     
     # Test action 0 (move to next stop)
     observations, infos = env.reset(seed=42)

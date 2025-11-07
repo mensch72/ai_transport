@@ -32,6 +32,8 @@ class AITransportParallelEnv(ParallelEnv):
         num_stops: int = 10,
         max_passengers_per_vehicle: int = 50,
         max_passengers_per_stop: int = 20,
+        passenger_arrival_rate: float = 0.5,
+        crowded_stop_threshold: float = 0.75,
         render_mode: Optional[str] = None,
     ):
         """
@@ -42,6 +44,8 @@ class AITransportParallelEnv(ParallelEnv):
             num_stops: Number of stops in the transport network
             max_passengers_per_vehicle: Maximum passenger capacity per vehicle
             max_passengers_per_stop: Maximum passengers that can wait at a stop
+            passenger_arrival_rate: Average passengers arriving per stop per timestep (Poisson)
+            crowded_stop_threshold: Fraction of max capacity to consider stop crowded (0-1)
             render_mode: Mode for rendering ("human" or "rgb_array")
         """
         super().__init__()
@@ -50,6 +54,8 @@ class AITransportParallelEnv(ParallelEnv):
         self.num_stops = num_stops
         self.max_passengers_per_vehicle = max_passengers_per_vehicle
         self.max_passengers_per_stop = max_passengers_per_stop
+        self.passenger_arrival_rate = passenger_arrival_rate
+        self.crowded_stop_threshold = int(crowded_stop_threshold * max_passengers_per_stop)
         self.render_mode = render_mode
         
         # Define possible agents
@@ -125,6 +131,9 @@ class AITransportParallelEnv(ParallelEnv):
         # Initialize passengers on each bus
         self.bus_passengers = {agent: 0 for agent in self.agents}
         
+        # Initialize passenger destinations (track where passengers want to go)
+        self.bus_destinations = {agent: {} for agent in self.agents}  # {stop: count}
+        
         # Initialize passengers waiting at each stop
         self.stop_passengers = np.random.randint(0, 5, size=self.num_stops)
         
@@ -166,18 +175,31 @@ class AITransportParallelEnv(ParallelEnv):
                     self.stop_passengers[current_pos],
                     self.max_passengers_per_vehicle - self.bus_passengers[agent]
                 )
-                self.bus_passengers[agent] += passengers_to_pick
-                self.stop_passengers[current_pos] -= passengers_to_pick
-                rewards[agent] += passengers_to_pick * 0.5  # Reward for picking up passengers
                 
-                # Drop off some passengers (simplified: random portion)
-                if self.bus_passengers[agent] > 0:
-                    passengers_to_drop = np.random.randint(0, self.bus_passengers[agent] + 1)
-                    self.bus_passengers[agent] -= passengers_to_drop
-                    rewards[agent] += passengers_to_drop * 1.0  # Higher reward for delivering passengers
+                if passengers_to_pick > 0:
+                    self.bus_passengers[agent] += passengers_to_pick
+                    self.stop_passengers[current_pos] -= passengers_to_pick
+                    rewards[agent] += passengers_to_pick * 0.5  # Reward for picking up passengers
+                    
+                    # Assign destinations to new passengers (deterministic based on current state)
+                    # Passengers want to go to stops ahead (at least 2 stops away)
+                    for _ in range(passengers_to_pick):
+                        # Destination is current position + (2 to num_stops/2) stops
+                        dest_offset = 2 + (self.timestep % (max(2, self.num_stops // 2)))
+                        destination = (current_pos + dest_offset) % self.num_stops
+                        self.bus_destinations[agent][destination] = \
+                            self.bus_destinations[agent].get(destination, 0) + 1
                 
                 # Move to next stop
-                self.bus_positions[agent] = (current_pos + 1) % self.num_stops
+                next_pos = (current_pos + 1) % self.num_stops
+                self.bus_positions[agent] = next_pos
+                
+                # Drop off passengers at new position
+                if next_pos in self.bus_destinations[agent]:
+                    passengers_to_drop = self.bus_destinations[agent][next_pos]
+                    self.bus_passengers[agent] -= passengers_to_drop
+                    rewards[agent] += passengers_to_drop * 1.0  # Higher reward for delivering passengers
+                    del self.bus_destinations[agent][next_pos]
                 
             elif action == 1:  # Wait at current stop
                 # Pick up more passengers while waiting
@@ -197,7 +219,7 @@ class AITransportParallelEnv(ParallelEnv):
         
         # Add new passengers to stops
         for i in range(self.num_stops):
-            new_passengers = np.random.poisson(0.5)  # Average 0.5 passengers per stop per timestep
+            new_passengers = np.random.poisson(self.passenger_arrival_rate)
             self.stop_passengers[i] = min(
                 self.stop_passengers[i] + new_passengers,
                 self.max_passengers_per_stop
@@ -205,7 +227,7 @@ class AITransportParallelEnv(ParallelEnv):
         
         # Penalty for overcrowded stops
         for agent in self.agents:
-            crowded_stops = np.sum(self.stop_passengers > 15)
+            crowded_stops = np.sum(self.stop_passengers > self.crowded_stop_threshold)
             rewards[agent] -= crowded_stops * 0.1
         
         # Get new observations
