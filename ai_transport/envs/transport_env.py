@@ -440,8 +440,8 @@ class parallel_env(ParallelEnv):
             pos = self.agent_positions[other_agent]
             agent_type = 'vehicles' if other_agent in self.vehicle_agents else 'humans'
             
-            if isinstance(pos, tuple):
-                # Agent on edge
+            if isinstance(pos, tuple) and len(pos) == 2:
+                # Agent on edge (validate it's a 2-element tuple)
                 edge, coord = pos
                 if edge in edge_counts:
                     edge_counts[edge][agent_type] += 1
