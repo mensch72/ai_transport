@@ -207,14 +207,42 @@ class AITransportParallelEnv(ParallelEnv):
                     self.stop_passengers[current_pos] // 2,  # Pick up half
                     self.max_passengers_per_vehicle - self.bus_passengers[agent]
                 )
-                self.bus_passengers[agent] += passengers_to_pick
-                self.stop_passengers[current_pos] -= passengers_to_pick
-                rewards[agent] += passengers_to_pick * 0.3  # Lower reward for waiting
+                
+                if passengers_to_pick > 0:
+                    self.bus_passengers[agent] += passengers_to_pick
+                    self.stop_passengers[current_pos] -= passengers_to_pick
+                    rewards[agent] += passengers_to_pick * 0.3  # Lower reward for waiting
+                    
+                    # Assign destinations to new passengers (same as action 0)
+                    for _ in range(passengers_to_pick):
+                        dest_offset = 2 + (self.timestep % (max(2, self.num_stops // 2)))
+                        destination = (current_pos + dest_offset) % self.num_stops
+                        self.bus_destinations[agent][destination] = \
+                            self.bus_destinations[agent].get(destination, 0) + 1
+                
                 rewards[agent] -= 0.1  # Small penalty for not moving
                 
             elif action == 2:  # Skip stop (express route)
-                # Move two stops ahead
-                self.bus_positions[agent] = (current_pos + 2) % self.num_stops
+                # Move two stops ahead, checking for drop-offs at both intermediate and final stop
+                intermediate_pos = (current_pos + 1) % self.num_stops
+                final_pos = (current_pos + 2) % self.num_stops
+                
+                # Drop off passengers at intermediate stop (if any)
+                if intermediate_pos in self.bus_destinations[agent]:
+                    passengers_to_drop = self.bus_destinations[agent][intermediate_pos]
+                    self.bus_passengers[agent] -= passengers_to_drop
+                    rewards[agent] += passengers_to_drop * 1.0
+                    del self.bus_destinations[agent][intermediate_pos]
+                
+                self.bus_positions[agent] = final_pos
+                
+                # Drop off passengers at final stop (if any)
+                if final_pos in self.bus_destinations[agent]:
+                    passengers_to_drop = self.bus_destinations[agent][final_pos]
+                    self.bus_passengers[agent] -= passengers_to_drop
+                    rewards[agent] += passengers_to_drop * 1.0
+                    del self.bus_destinations[agent][final_pos]
+                
                 rewards[agent] -= 0.2  # Penalty for skipping stops
         
         # Add new passengers to stops
