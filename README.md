@@ -34,6 +34,37 @@ The environment maintains the following state components:
 3. **Vehicle destinations**: Each vehicle has a destination which is either:
    - `None` (no current destination), or
    - A node in the network
+4. **Human aboard status**: Each human has an `aboard` status which is either:
+   - `None` (not aboard any vehicle), or
+   - The ID of a vehicle (aboard that vehicle)
+5. **Step type**: The current step type, which determines which agents can take which actions:
+   - `routing`: Vehicles at nodes can set their destination
+   - `unboarding`: Humans aboard vehicles at nodes can unboard
+   - `boarding`: Humans at nodes can board vehicles at the same node
+   - `departing`: Vehicles at nodes can depart into outgoing edges; humans at nodes (not aboard) can walk into outgoing edges
+
+## Action Spaces
+
+Action spaces are dynamic and depend on the current `step_type` and agent state:
+
+### Routing Step
+- **Vehicles at nodes**: Can set destination to `None` or any node (N+1 actions where N is number of nodes)
+- **All other agents**: Can only pass (1 action)
+
+### Unboarding Step
+- **Humans aboard vehicles at nodes**: Can pass or unboard (2 actions)
+- **All other agents**: Can only pass (1 action)
+
+### Boarding Step
+- **Humans at nodes (not aboard)**: Can pass or board any vehicle at the same node (M+1 actions where M is number of vehicles at that node)
+- **All other agents**: Can only pass (1 action)
+
+### Departing Step
+- **Vehicles at nodes**: Can pass or depart into any outgoing edge (E+1 actions where E is number of outgoing edges)
+- **Humans at nodes (not aboard)**: Can pass or walk into any outgoing edge (E+1 actions)
+- **All other agents**: Can only pass (1 action)
+
+**Note**: Agents on edges (not at nodes) can only pass in all step types.
 
 ## Usage
 

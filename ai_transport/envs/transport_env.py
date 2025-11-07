@@ -132,6 +132,8 @@ class parallel_env(ParallelEnv):
         self.real_time = None
         self.agent_positions = None
         self.vehicle_destinations = None
+        self.human_aboard = None  # For each human: None or vehicle ID
+        self.step_type = None  # One of: 'routing', 'unboarding', 'boarding', 'departing'
 
     def _create_default_network(self):
         """Create a simple default network for testing"""
@@ -171,11 +173,84 @@ class parallel_env(ParallelEnv):
         return Box(low=0, high=1, shape=(10,), dtype=np.float32)
 
     # Action space should be defined here.
-    # If your spaces change over time, remove this line (disable caching).
-    @functools.lru_cache(maxsize=None)
+    # Action spaces change based on step_type, so caching is disabled
     def action_space(self, agent):
-        # Placeholder action space - will be refined based on actual action structure
-        return Discrete(5, seed=self.np_random_seed)
+        """
+        Return the action space for the agent based on current step_type.
+        
+        Action spaces by step_type:
+        - routing: vehicles at nodes can set destination to None or any node
+        - unboarding: humans aboard vehicles at nodes can pass or unboard
+        - boarding: humans at nodes can pass or board any vehicle at same node
+        - departing: vehicles at nodes can pass or choose outgoing edge;
+                     humans at nodes (not aboard) can pass or choose outgoing edge
+        """
+        if self.step_type is None or agent not in self.agents:
+            # Default fallback - single action (pass)
+            return Discrete(1, seed=self.np_random_seed)
+        
+        if self.step_type == 'routing':
+            if agent in self.vehicle_agents:
+                pos = self.agent_positions.get(agent)
+                # Only vehicles at nodes can act
+                if pos is not None and not isinstance(pos, tuple):
+                    # Actions: 0=keep current, then one action per node to set as destination
+                    # Index 0 = set destination to None
+                    # Index 1..N = set destination to node 0, 1, ..., N-1
+                    num_nodes = len(self.network.nodes())
+                    return Discrete(num_nodes + 1, seed=self.np_random_seed)
+            # All other agents can only pass
+            return Discrete(1, seed=self.np_random_seed)
+        
+        elif self.step_type == 'unboarding':
+            if agent in self.human_agents:
+                aboard = self.human_aboard.get(agent)
+                if aboard is not None:
+                    vehicle_pos = self.agent_positions.get(aboard)
+                    # Only humans aboard vehicles at nodes can act
+                    if vehicle_pos is not None and not isinstance(vehicle_pos, tuple):
+                        # Actions: 0=pass, 1=unboard
+                        return Discrete(2, seed=self.np_random_seed)
+            # All other agents can only pass
+            return Discrete(1, seed=self.np_random_seed)
+        
+        elif self.step_type == 'boarding':
+            if agent in self.human_agents:
+                pos = self.agent_positions.get(agent)
+                aboard = self.human_aboard.get(agent)
+                # Only humans at nodes and not aboard can act
+                if pos is not None and not isinstance(pos, tuple) and aboard is None:
+                    # Find vehicles at the same node
+                    vehicles_at_node = [
+                        v for v in self.vehicle_agents 
+                        if self.agent_positions.get(v) == pos
+                    ]
+                    # Actions: 0=pass, 1..N=board vehicle 0, 1, ..., N-1
+                    return Discrete(len(vehicles_at_node) + 1, seed=self.np_random_seed)
+            # All other agents can only pass
+            return Discrete(1, seed=self.np_random_seed)
+        
+        elif self.step_type == 'departing':
+            pos = self.agent_positions.get(agent)
+            # Check if agent is at a node
+            if pos is not None and not isinstance(pos, tuple):
+                if agent in self.vehicle_agents:
+                    # Vehicles at nodes can choose outgoing edges
+                    outgoing_edges = list(self.network.out_edges(pos))
+                    # Actions: 0=pass, 1..N=depart into edge 0, 1, ..., N-1
+                    return Discrete(len(outgoing_edges) + 1, seed=self.np_random_seed)
+                elif agent in self.human_agents:
+                    aboard = self.human_aboard.get(agent)
+                    # Humans at nodes and not aboard can choose outgoing edges
+                    if aboard is None:
+                        outgoing_edges = list(self.network.out_edges(pos))
+                        # Actions: 0=pass, 1..N=walk into edge 0, 1, ..., N-1
+                        return Discrete(len(outgoing_edges) + 1, seed=self.np_random_seed)
+            # All other agents can only pass
+            return Discrete(1, seed=self.np_random_seed)
+        
+        # Default fallback
+        return Discrete(1, seed=self.np_random_seed)
 
     def render(self):
         """
@@ -189,7 +264,7 @@ class parallel_env(ParallelEnv):
             return
 
         if len(self.agents) > 0:
-            print(f"Current state: real_time={self.real_time:.2f}")
+            print(f"Current state: real_time={self.real_time:.2f}, step_type={self.step_type}")
             for agent in self.agents:
                 pos = self.agent_positions[agent]
                 if isinstance(pos, tuple):
@@ -200,6 +275,9 @@ class parallel_env(ParallelEnv):
                 if agent in self.vehicle_agents:
                     dest = self.vehicle_destinations[agent]
                     print(f"    destination: {dest}")
+                elif agent in self.human_agents:
+                    aboard = self.human_aboard[agent]
+                    print(f"    aboard: {aboard}")
         else:
             print("Environment terminated")
 
@@ -231,6 +309,12 @@ class parallel_env(ParallelEnv):
         
         # Initialize vehicle destinations - all start with None
         self.vehicle_destinations = {agent: None for agent in self.vehicle_agents}
+        
+        # Initialize human aboard status - all start with None (not aboard)
+        self.human_aboard = {agent: None for agent in self.human_agents}
+        
+        # Initialize step type - start with routing
+        self.step_type = 'routing'
         
         # Create observations (placeholder for now)
         observations = {agent: np.zeros(10, dtype=np.float32) for agent in self.agents}

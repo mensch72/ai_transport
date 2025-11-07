@@ -205,3 +205,139 @@ def test_raw_env():
     """Test that raw_env (AEC) function works"""
     test_env = raw_env()
     assert test_env is not None
+
+
+def test_human_aboard_state():
+    """Test that human_aboard state is initialized correctly"""
+    test_env = parallel_env(num_humans=2, num_vehicles=1)
+    test_env.reset()
+    
+    # Check that all humans have aboard status
+    for i in range(2):
+        agent = f"human_{i}"
+        assert agent in test_env.human_aboard
+        assert test_env.human_aboard[agent] is None  # Initially not aboard
+
+
+def test_step_type_state():
+    """Test that step_type state is initialized correctly"""
+    test_env = parallel_env()
+    test_env.reset()
+    
+    assert test_env.step_type is not None
+    assert test_env.step_type in ['routing', 'unboarding', 'boarding', 'departing']
+
+
+def test_action_space_routing():
+    """Test action spaces during routing step type"""
+    test_env = parallel_env(num_humans=2, num_vehicles=1)
+    test_env.reset()
+    test_env.step_type = 'routing'
+    
+    # Vehicles at nodes should have actions for each node + None
+    num_nodes = len(test_env.network.nodes())
+    vehicle_space = test_env.action_space('vehicle_0')
+    assert vehicle_space.n == num_nodes + 1
+    
+    # Humans should only have pass action
+    human_space = test_env.action_space('human_0')
+    assert human_space.n == 1
+
+
+def test_action_space_unboarding():
+    """Test action spaces during unboarding step type"""
+    test_env = parallel_env(num_humans=2, num_vehicles=1)
+    test_env.reset()
+    test_env.step_type = 'unboarding'
+    
+    # Human not aboard should only have pass
+    test_env.human_aboard['human_0'] = None
+    space = test_env.action_space('human_0')
+    assert space.n == 1
+    
+    # Human aboard vehicle at node should have pass and unboard
+    test_env.human_aboard['human_1'] = 'vehicle_0'
+    test_env.agent_positions['vehicle_0'] = 0  # at node
+    space = test_env.action_space('human_1')
+    assert space.n == 2
+    
+    # Vehicles should only have pass
+    vehicle_space = test_env.action_space('vehicle_0')
+    assert vehicle_space.n == 1
+
+
+def test_action_space_boarding():
+    """Test action spaces during boarding step type"""
+    test_env = parallel_env(num_humans=2, num_vehicles=2)
+    test_env.reset()
+    test_env.step_type = 'boarding'
+    
+    # Place all agents at node 0
+    test_env.agent_positions['human_0'] = 0
+    test_env.agent_positions['human_1'] = 0
+    test_env.agent_positions['vehicle_0'] = 0
+    test_env.agent_positions['vehicle_1'] = 0
+    test_env.human_aboard['human_0'] = None
+    test_env.human_aboard['human_1'] = None
+    
+    # Humans at node with 2 vehicles should have pass + 2 boarding options
+    space = test_env.action_space('human_0')
+    assert space.n == 3  # pass + 2 vehicles
+    
+    # Vehicles should only have pass
+    vehicle_space = test_env.action_space('vehicle_0')
+    assert vehicle_space.n == 1
+
+
+def test_action_space_departing():
+    """Test action spaces during departing step type"""
+    test_env = parallel_env(num_humans=2, num_vehicles=1)
+    test_env.reset()
+    test_env.step_type = 'departing'
+    
+    # Place agents at node 0
+    test_env.agent_positions['human_0'] = 0
+    test_env.agent_positions['human_1'] = 0
+    test_env.agent_positions['vehicle_0'] = 0
+    test_env.human_aboard['human_0'] = None  # Not aboard
+    test_env.human_aboard['human_1'] = 'vehicle_0'  # Aboard
+    
+    # Count outgoing edges from node 0
+    outgoing_edges = list(test_env.network.out_edges(0))
+    
+    # Vehicle at node should have pass + outgoing edges
+    vehicle_space = test_env.action_space('vehicle_0')
+    assert vehicle_space.n == len(outgoing_edges) + 1
+    
+    # Human at node not aboard should have pass + outgoing edges
+    human_space = test_env.action_space('human_0')
+    assert human_space.n == len(outgoing_edges) + 1
+    
+    # Human aboard should only have pass
+    human_aboard_space = test_env.action_space('human_1')
+    assert human_aboard_space.n == 1
+
+
+def test_action_space_agents_on_edges():
+    """Test that agents on edges can only pass in all step types"""
+    test_env = parallel_env(num_humans=1, num_vehicles=1)
+    test_env.reset()
+    
+    # Place agents on an edge
+    edges = list(test_env.network.edges())
+    if edges:
+        edge = edges[0]
+        test_env.agent_positions['human_0'] = (edge, 5.0)
+        test_env.agent_positions['vehicle_0'] = (edge, 3.0)
+        test_env.human_aboard['human_0'] = None
+        
+        for step_type in ['routing', 'unboarding', 'boarding', 'departing']:
+            test_env.step_type = step_type
+            
+            # Both should only have pass action when on edge
+            human_space = test_env.action_space('human_0')
+            assert human_space.n == 1
+            
+            vehicle_space = test_env.action_space('vehicle_0')
+            assert vehicle_space.n == 1
+
