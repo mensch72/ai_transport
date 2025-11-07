@@ -144,6 +144,43 @@ The environment processes actions and updates state based on the current `step_t
 
 See `examples/step_logic_demo.py` for a complete demonstration.
 
+## Observations
+
+Observations are returned as dictionaries and depend on the `observation_scenario` parameter:
+
+### Full Observation (`observation_scenario='full'`)
+Every agent observes the complete state:
+- `real_time`: Current time
+- `step_type`: Current step type
+- `agent_positions`: Positions of all agents
+- `vehicle_destinations`: Destinations of all vehicles
+- `human_aboard`: Aboard status of all humans
+- `agent_attributes`: Attributes of all agents
+- `network_nodes`: List of all nodes
+- `network_edges`: List of all edges with attributes
+
+### Local Observation (`observation_scenario='local'`)
+Agents observe only agents at the same node or edge:
+- `real_time`: Current time
+- `step_type`: Current step type
+- `my_position`: The agent's own position
+- `agents_here`: Dictionary of agents at same location, with their:
+  - Position
+  - Attributes
+  - State components (destination for vehicles, aboard for humans)
+
+### Statistical Observation (`observation_scenario='statistical'`)
+As local observation, plus aggregate counts:
+- All local observation fields
+- `node_counts`: For each node, count of humans and vehicles
+- `edge_counts`: For each edge, count of humans and vehicles
+
+See `examples/observations_demo.py` for a complete demonstration.
+
+## Rewards
+
+All rewards are constantly zero. The preference and goal logic will be implemented outside the environment class based on observations.
+
 ## Package Structure
 
 ```
@@ -182,8 +219,5 @@ Run examples:
 python examples/basic_example.py
 python examples/action_spaces_demo.py
 python examples/step_logic_demo.py
+python examples/observations_demo.py
 ```
-
-## Note
-
-Observations and rewards are not yet implemented. The environment currently returns placeholder zero observations and rewards. These will be specified and implemented in future updates.

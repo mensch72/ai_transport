@@ -586,3 +586,148 @@ def test_humans_aboard_move_with_vehicle():
     
     # Human still aboard
     assert test_env.human_aboard['human_0'] == 'vehicle_0'
+
+
+def test_observation_scenario_full():
+    """Test full observation scenario"""
+    test_env = parallel_env(num_humans=2, num_vehicles=1, observation_scenario='full')
+    test_env.reset()
+    
+    obs = test_env._generate_observation_for_agent('human_0')
+    
+    # Full observation should have all state components
+    assert 'real_time' in obs
+    assert 'step_type' in obs
+    assert 'agent_positions' in obs
+    assert 'vehicle_destinations' in obs
+    assert 'human_aboard' in obs
+    assert 'agent_attributes' in obs
+    assert 'network_nodes' in obs
+    assert 'network_edges' in obs
+    
+    # Check all agents are in positions
+    assert len(obs['agent_positions']) == 3
+    assert 'human_0' in obs['agent_positions']
+    assert 'human_1' in obs['agent_positions']
+    assert 'vehicle_0' in obs['agent_positions']
+
+
+def test_observation_scenario_local():
+    """Test local observation scenario"""
+    test_env = parallel_env(num_humans=2, num_vehicles=1, observation_scenario='local')
+    test_env.reset()
+    
+    # All agents start at same node, so should see each other
+    obs = test_env._generate_observation_for_agent('human_0')
+    
+    assert 'real_time' in obs
+    assert 'step_type' in obs
+    assert 'my_position' in obs
+    assert 'agents_here' in obs
+    
+    # Should see all 3 agents (including self) at initial position
+    assert len(obs['agents_here']) == 3
+    assert 'human_0' in obs['agents_here']
+    assert 'human_1' in obs['agents_here']
+    assert 'vehicle_0' in obs['agents_here']
+    
+    # Check agent info includes attributes
+    assert 'attributes' in obs['agents_here']['human_0']
+    assert 'attributes' in obs['agents_here']['vehicle_0']
+
+
+def test_observation_scenario_local_separate_locations():
+    """Test local observation when agents are at different locations"""
+    test_env = parallel_env(num_humans=2, num_vehicles=1, observation_scenario='local')
+    test_env.reset()
+    
+    # Move agents to different locations
+    test_env.agent_positions['human_0'] = 0
+    test_env.agent_positions['human_1'] = 1
+    test_env.agent_positions['vehicle_0'] = 2
+    
+    obs = test_env._generate_observation_for_agent('human_0')
+    
+    # Should only see itself at node 0
+    assert len(obs['agents_here']) == 1
+    assert 'human_0' in obs['agents_here']
+    assert 'human_1' not in obs['agents_here']
+    assert 'vehicle_0' not in obs['agents_here']
+
+
+def test_observation_scenario_statistical():
+    """Test statistical observation scenario"""
+    test_env = parallel_env(num_humans=2, num_vehicles=1, observation_scenario='statistical')
+    test_env.reset()
+    
+    obs = test_env._generate_observation_for_agent('human_0')
+    
+    # Should have local observation components
+    assert 'real_time' in obs
+    assert 'step_type' in obs
+    assert 'my_position' in obs
+    assert 'agents_here' in obs
+    
+    # Plus statistical information
+    assert 'node_counts' in obs
+    assert 'edge_counts' in obs
+    
+    # Check counts at initial node (all agents at node 0)
+    assert 0 in obs['node_counts']
+    assert obs['node_counts'][0]['humans'] == 2
+    assert obs['node_counts'][0]['vehicles'] == 1
+
+
+def test_observation_scenario_statistical_on_edges():
+    """Test statistical counts for agents on edges"""
+    test_env = parallel_env(num_humans=1, num_vehicles=1, observation_scenario='statistical')
+    test_env.reset()
+    
+    # Place agents on edge
+    edges = list(test_env.network.edges())
+    edge = edges[0]
+    test_env.agent_positions['human_0'] = (edge, 5.0)
+    test_env.agent_positions['vehicle_0'] = (edge, 3.0)
+    
+    obs = test_env._generate_observation_for_agent('human_0')
+    
+    # Check edge counts
+    assert edge in obs['edge_counts']
+    assert obs['edge_counts'][edge]['humans'] == 1
+    assert obs['edge_counts'][edge]['vehicles'] == 1
+
+
+def test_rewards_always_zero():
+    """Test that rewards are always zero"""
+    test_env = parallel_env(num_humans=2, num_vehicles=1)
+    test_env.reset()
+    test_env.step_type = 'routing'
+    
+    actions = {agent: 0 for agent in test_env.agents}
+    obs, rewards, terms, truncs, infos = test_env.step(actions)
+    
+    # All rewards should be zero
+    for agent in test_env.agents:
+        assert rewards[agent] == 0.0
+
+
+def test_observation_scenario_invalid():
+    """Test that invalid observation scenario raises error"""
+    with pytest.raises(ValueError, match="observation_scenario must be"):
+        parallel_env(observation_scenario='invalid')
+
+
+def test_observations_in_step():
+    """Test that observations are generated correctly in step"""
+    test_env = parallel_env(num_humans=1, num_vehicles=1, observation_scenario='full')
+    test_env.reset()
+    test_env.step_type = 'routing'
+    
+    actions = {agent: 0 for agent in test_env.agents}
+    obs, rewards, terms, truncs, infos = test_env.step(actions)
+    
+    # Check observations are dicts
+    for agent in test_env.agents:
+        assert isinstance(obs[agent], dict)
+        assert 'real_time' in obs[agent]
+        assert 'step_type' in obs[agent]

@@ -12,7 +12,8 @@ from pettingzoo.utils import parallel_to_aec, wrappers
 
 
 def env(render_mode=None, num_humans=2, num_vehicles=1, network=None,
-        human_speed=1.0, vehicle_speed=2.0, vehicle_capacity=4, vehicle_fuel_use=1.0):
+        human_speed=1.0, vehicle_speed=2.0, vehicle_capacity=4, vehicle_fuel_use=1.0,
+        observation_scenario='full'):
     """
     The env function often wraps the environment in wrappers by default.
     You can find full documentation for these methods
@@ -27,7 +28,8 @@ def env(render_mode=None, num_humans=2, num_vehicles=1, network=None,
         human_speed=human_speed,
         vehicle_speed=vehicle_speed,
         vehicle_capacity=vehicle_capacity,
-        vehicle_fuel_use=vehicle_fuel_use
+        vehicle_fuel_use=vehicle_fuel_use,
+        observation_scenario=observation_scenario
     )
     # This wrapper is only for environments which print results to the terminal
     if render_mode == "ansi":
@@ -41,7 +43,8 @@ def env(render_mode=None, num_humans=2, num_vehicles=1, network=None,
 
 
 def raw_env(render_mode=None, num_humans=2, num_vehicles=1, network=None,
-            human_speed=1.0, vehicle_speed=2.0, vehicle_capacity=4, vehicle_fuel_use=1.0):
+            human_speed=1.0, vehicle_speed=2.0, vehicle_capacity=4, vehicle_fuel_use=1.0,
+            observation_scenario='full'):
     """
     To support the AEC API, the raw_env() function just uses the from_parallel
     function to convert from a ParallelEnv to an AEC env
@@ -54,7 +57,8 @@ def raw_env(render_mode=None, num_humans=2, num_vehicles=1, network=None,
         human_speed=human_speed,
         vehicle_speed=vehicle_speed,
         vehicle_capacity=vehicle_capacity,
-        vehicle_fuel_use=vehicle_fuel_use
+        vehicle_fuel_use=vehicle_fuel_use,
+        observation_scenario=observation_scenario
     )
     env = parallel_to_aec(env)
     return env
@@ -75,7 +79,8 @@ class parallel_env(ParallelEnv):
         human_speed=1.0,
         vehicle_speed=2.0,
         vehicle_capacity=4,
-        vehicle_fuel_use=1.0
+        vehicle_fuel_use=1.0,
+        observation_scenario='full'
     ):
         """
         The init method takes in environment arguments and should define the following attributes:
@@ -87,9 +92,20 @@ class parallel_env(ParallelEnv):
         If these methods are not overridden, spaces will be inferred from self.observation_spaces/action_spaces, raising a warning.
 
         These attributes should not be changed after initialization.
+        
+        Args:
+            observation_scenario: One of 'full', 'local', or 'statistical'
+                - 'full': Every agent observes the full state
+                - 'local': Agents observe only agents at same node/edge
+                - 'statistical': As local, plus counts of agents at all nodes/edges
         """
         self.num_humans = num_humans
         self.num_vehicles = num_vehicles
+        
+        # Observation scenario
+        if observation_scenario not in ['full', 'local', 'statistical']:
+            raise ValueError(f"observation_scenario must be 'full', 'local', or 'statistical', got {observation_scenario}")
+        self.observation_scenario = observation_scenario
         
         # Create agent names
         human_agents = [f"human_{i}" for i in range(num_humans)]
@@ -167,13 +183,19 @@ class parallel_env(ParallelEnv):
                     raise ValueError(f"Edge ({u}, {v}) missing required '{attr}' attribute")
 
     # Observation space should be defined here.
-    # lru_cache allows observation and action spaces to be memoized, reducing clock cycles required to get each agent's space.
-    # If your spaces change over time, remove this line (disable caching).
-    @functools.lru_cache(maxsize=None)
+    # Observation spaces change based on observation_scenario, so caching is disabled
     def observation_space(self, agent):
         # gymnasium spaces are defined and documented here: https://gymnasium.farama.org/api/spaces/
-        # For now, returning a placeholder space - will be refined based on actual observation structure
-        return Box(low=0, high=1, shape=(10,), dtype=np.float32)
+        # Observations are returned as dictionaries, so we use DictSpace
+        # The exact structure depends on observation_scenario and current state
+        # For simplicity, we return a flexible dict space
+        # In practice, observations will be Python dicts that can contain various data
+        
+        # Return a generic dict space - actual observations will be dicts
+        # This is a placeholder that allows any dict structure
+        return DictSpace({
+            'agent': Box(low=-np.inf, high=np.inf, shape=(1,), dtype=np.float32)
+        })
 
     # Action space should be defined here.
     # Action spaces change based on step_type, so caching is disabled
@@ -318,11 +340,120 @@ class parallel_env(ParallelEnv):
         # Initialize step type - start with routing
         self.step_type = 'routing'
         
-        # Create observations (placeholder for now)
-        observations = {agent: np.zeros(10, dtype=np.float32) for agent in self.agents}
+        # Create observations based on scenario
+        observations = self._generate_observations()
         infos = {agent: {} for agent in self.agents}
 
         return observations, infos
+    
+    def _generate_observations(self):
+        """Generate observations for all agents based on observation_scenario"""
+        observations = {}
+        for agent in self.agents:
+            observations[agent] = self._generate_observation_for_agent(agent)
+        return observations
+    
+    def _generate_observation_for_agent(self, agent):
+        """Generate observation for a single agent based on observation_scenario"""
+        if self.observation_scenario == 'full':
+            return self._generate_full_observation(agent)
+        elif self.observation_scenario == 'local':
+            return self._generate_local_observation(agent)
+        elif self.observation_scenario == 'statistical':
+            return self._generate_statistical_observation(agent)
+        else:
+            return {}
+    
+    def _generate_full_observation(self, agent):
+        """Full observation: agent observes the complete state"""
+        obs = {
+            'real_time': float(self.real_time),
+            'step_type': self.step_type,
+            'agent_positions': dict(self.agent_positions),
+            'vehicle_destinations': dict(self.vehicle_destinations),
+            'human_aboard': dict(self.human_aboard),
+            'agent_attributes': dict(self.agent_attributes),
+            'network_nodes': list(self.network.nodes()),
+            'network_edges': [(u, v, dict(data)) for u, v, data in self.network.edges(data=True)]
+        }
+        return obs
+    
+    def _generate_local_observation(self, agent):
+        """
+        Local observation: agent observes only agents at same node or on same edge,
+        along with their state components and attributes.
+        """
+        agent_pos = self.agent_positions[agent]
+        
+        # Find agents at same location
+        agents_at_location = []
+        for other_agent in self.agents:
+            other_pos = self.agent_positions[other_agent]
+            # Check if at same location (node or edge)
+            if agent_pos == other_pos:
+                agents_at_location.append(other_agent)
+        
+        # Build observation with info about agents at same location
+        obs = {
+            'real_time': float(self.real_time),
+            'step_type': self.step_type,
+            'my_position': agent_pos,
+            'agents_here': {}
+        }
+        
+        for other_agent in agents_at_location:
+            agent_info = {
+                'position': self.agent_positions[other_agent],
+                'attributes': dict(self.agent_attributes[other_agent])
+            }
+            
+            # Add type-specific state
+            if other_agent in self.vehicle_agents:
+                agent_info['destination'] = self.vehicle_destinations[other_agent]
+            elif other_agent in self.human_agents:
+                agent_info['aboard'] = self.human_aboard[other_agent]
+            
+            obs['agents_here'][other_agent] = agent_info
+        
+        return obs
+    
+    def _generate_statistical_observation(self, agent):
+        """
+        Statistical observation: as local, plus counts of humans and vehicles
+        at every node and on every edge.
+        """
+        # Start with local observation
+        obs = self._generate_local_observation(agent)
+        
+        # Add statistical information
+        node_counts = {}
+        edge_counts = {}
+        
+        for node in self.network.nodes():
+            node_counts[node] = {'humans': 0, 'vehicles': 0}
+        
+        for edge in self.network.edges():
+            edge_counts[edge] = {'humans': 0, 'vehicles': 0}
+        
+        # Count agents at each location
+        for other_agent in self.agents:
+            pos = self.agent_positions[other_agent]
+            agent_type = 'vehicles' if other_agent in self.vehicle_agents else 'humans'
+            
+            if isinstance(pos, tuple):
+                # Agent on edge
+                edge, coord = pos
+                if edge in edge_counts:
+                    edge_counts[edge][agent_type] += 1
+            else:
+                # Agent at node
+                if pos in node_counts:
+                    node_counts[pos][agent_type] += 1
+        
+        obs['node_counts'] = node_counts
+        obs['edge_counts'] = edge_counts
+        
+        return obs
 
     def step(self, actions):
         """
@@ -349,9 +480,12 @@ class parallel_env(ParallelEnv):
         elif self.step_type == 'departing':
             self._process_departing_actions(actions)
         
-        # Placeholder observations and rewards - to be implemented later
-        observations = {agent: np.zeros(10, dtype=np.float32) for agent in self.agents}
+        # Generate observations based on scenario
+        observations = self._generate_observations()
+        
+        # All rewards are constantly zero
         rewards = {agent: 0.0 for agent in self.agents}
+        
         terminations = {agent: False for agent in self.agents}
         truncations = {agent: False for agent in self.agents}
         infos = {agent: {} for agent in self.agents}
