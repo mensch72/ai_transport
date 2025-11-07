@@ -6,6 +6,7 @@ import numpy as np
 from gymnasium.spaces import Box, Dict as DictSpace, Discrete, Tuple as TupleSpace
 from gymnasium.utils import seeding
 import networkx as nx
+from scipy.spatial import Delaunay
 
 from pettingzoo import ParallelEnv
 from pettingzoo.utils import parallel_to_aec, wrappers
@@ -176,8 +177,12 @@ class parallel_env(ParallelEnv):
         Args:
             num_nodes: Number of nodes to generate
             bidirectional_prob: Probability that an edge is bidirectional (otherwise random direction)
-            speed_mean: Mean for exponential distribution of edge speeds
-            capacity_mean: Mean for exponential distribution of edge capacities
+            speed_mean: Mean (scale parameter) for exponential distribution of edge speeds.
+                       Exponential distribution is used to model varying traffic conditions
+                       with occasional high-speed routes.
+            capacity_mean: Mean (scale parameter) for exponential distribution of edge capacities.
+                          Exponential distribution models varying infrastructure quality
+                          with occasional high-capacity routes.
             coord_mean: Mean for 2D Gaussian distribution of node coordinates
             coord_std: Standard deviation for 2D Gaussian distribution of node coordinates
             seed: Random seed for reproducibility
@@ -186,8 +191,6 @@ class parallel_env(ParallelEnv):
             NetworkX DiGraph with nodes having 'name', 'x', 'y' attributes
             and edges having 'length', 'speed', 'capacity' attributes
         """
-        from scipy.spatial import Delaunay
-        
         # Set random seed if provided
         if seed is not None:
             rng = np.random.RandomState(seed)

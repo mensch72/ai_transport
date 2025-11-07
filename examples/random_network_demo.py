@@ -113,8 +113,7 @@ def main():
     env3 = parallel_env(
         num_humans=5,
         num_vehicles=3,
-        network=network3,
-        render_mode="human"
+        network=network3
     )
     
     env3.reset(seed=456)
