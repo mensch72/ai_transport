@@ -68,6 +68,11 @@ def main():
     VEHICLE_DEPART_PROB = 0.6  # Lower probability for more staggered departures
     HUMAN_WALK_PROB = 0.5  # Lower probability for more staggered departures
     
+    # Create directory for debug frames
+    import os
+    os.makedirs('debug_frames', exist_ok=True)
+    frame_counter = 0
+    
     for cycle in range(num_cycles):
         # Take actions for current step type (environment cycles automatically)
         current_step = env.step_type
@@ -144,11 +149,17 @@ def main():
         # Take step (environment auto-cycles to next step type)
         obs, rewards, terms, truncs, infos = env.step(actions)
         
-        # Render frame (captures all step types, showing the progression)
-        env.render()
+        # Only render and record after departing step (when visual state changes)
+        # step() doesn't auto-render when recording, so we control it here
+        if env.step_type == 'routing':  # Just finished departing step
+            env.render()  # This captures the frame to video
+            # Also save individual debug frame
+            debug_filename = f'debug_frames/frame_{frame_counter:04d}_cycle{cycle}_time{env.real_time:.2f}.png'
+            env.save_frame(debug_filename)
+            frame_counter += 1
         
         if (cycle + 1) % 10 == 0:
-            print(f"   Cycle {cycle + 1}/{num_cycles} completed (time: {env.real_time:.2f}, step: {current_step})")
+            print(f"   Cycle {cycle + 1}/{num_cycles} completed (time: {env.real_time:.2f}, step: {env.step_type})")
     
     # Save video
     print("\n6. Saving video...")
@@ -169,8 +180,9 @@ def main():
     print("  - transport_initial.png (initial state)")
     print("  - transport_final.png (final state)")
     print("  - transport_simulation.mp4 (full simulation video)")
-    print(f"\nVideo contains {num_cycles} frames showing progression through {num_cycles} step cycles.")
-    print("Step types cycle: routing → unboarding → boarding → departing")
+    print(f"  - debug_frames/ directory with {frame_counter} individual PNG frames")
+    print(f"\nVideo contains {frame_counter} frames showing progression through departing steps.")
+    print("Each frame shows the state after a departing step (when agents move).")
     print("\nNote: To enable video recording, install imageio with:")
     print("  pip install imageio[ffmpeg]")
 

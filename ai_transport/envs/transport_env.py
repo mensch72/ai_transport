@@ -542,6 +542,20 @@ class parallel_env(ParallelEnv):
                     t = coord / edge_length
                     x = x1 + t * (x2 - x1)
                     y = y1 + t * (y2 - y1)
+                    
+                    # For bidirectional edges, offset to correct lane
+                    if self.network.has_edge(u, v) and self.network.has_edge(v, u):
+                        # Calculate perpendicular offset for lane separation
+                        dx = x2 - x1
+                        dy = y2 - y1
+                        length = np.sqrt(dx**2 + dy**2)
+                        if length > 0:
+                            # Perpendicular unit vector
+                            px = -dy / length * 0.25  # Lane offset
+                            py = dx / length * 0.25
+                            # Offset to the right side of the direction of travel
+                            x += px
+                            y += py
                 else:
                     x, y = x1, y1
             else:
@@ -895,7 +909,9 @@ class parallel_env(ParallelEnv):
         truncations = {agent: False for agent in self.agents}
         infos = {agent: {} for agent in self.agents}
 
-        if self.render_mode == "human":
+        # Auto-render only if render_mode is human and not currently recording
+        # When recording, we want explicit control over when to capture frames
+        if self.render_mode == "human" and not getattr(self, '_recording', False):
             self.render()
             
         return observations, rewards, terminations, truncations, infos
