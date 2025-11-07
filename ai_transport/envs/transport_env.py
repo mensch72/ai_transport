@@ -839,7 +839,7 @@ class parallel_env(ParallelEnv):
         Statistical observation: as local, plus counts of humans and vehicles
         at every node and on every edge.
         """
-        # Start with local observation
+        # Start with local observation (which includes action_mapping)
         obs = self._generate_local_observation(agent)
         
         # Add statistical information
@@ -910,7 +910,9 @@ class parallel_env(ParallelEnv):
                     if vehicle_pos is not None and not isinstance(vehicle_pos, tuple):
                         # Human aboard vehicle at node can unboard
                         mapping['description'][0] = 'pass'
+                        mapping['details'][0] = None
                         mapping['description'][1] = 'unboard'
+                        mapping['details'][1] = aboard  # Include vehicle ID being unboarded from
                         return mapping
             # All other agents can only pass
             mapping['description'][0] = 'pass'
