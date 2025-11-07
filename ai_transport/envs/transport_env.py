@@ -512,16 +512,18 @@ class parallel_env(ParallelEnv):
                 )
                 self.ax.add_patch(arrow)
         
-        # Draw nodes
+        # Draw nodes (larger, without labels)
         for node in self.network.nodes():
             x, y = pos[node]
-            circle = Circle((x, y), radius=0.3, color='lightblue', 
-                          ec='black', linewidth=1.5, zorder=2)
+            circle = Circle((x, y), radius=1.0, color='lightblue', 
+                          ec='black', linewidth=2, zorder=2)
             self.ax.add_patch(circle)
-            self.ax.text(x, y, str(node), ha='center', va='center',
-                        fontsize=10, fontweight='bold', zorder=3)
         
-        # Draw agents
+        # Collect agent positions and add perturbation for overlapping agents
+        agent_display_positions = {}
+        position_counts = {}  # Track how many agents at each position
+        position_indices = {}  # Track which index each agent gets at a position
+        
         for agent in self.agents:
             agent_pos = self.agent_positions[agent]
             
@@ -542,6 +544,29 @@ class parallel_env(ParallelEnv):
             else:
                 # Agent at node
                 x, y = pos[agent_pos]
+            
+            # Track position for perturbation
+            pos_key = (round(x, 2), round(y, 2))  # Use rounded position as key
+            if pos_key not in position_counts:
+                position_counts[pos_key] = 0
+                position_indices[pos_key] = []
+            position_indices[pos_key].append(agent)
+            agent_idx = position_counts[pos_key]
+            position_counts[pos_key] += 1
+            
+            # Add small perturbation if multiple agents at same location
+            if agent_idx > 0:
+                # Arrange in a circle around the position
+                angle = 2 * np.pi * agent_idx / max(position_counts[pos_key], 4)
+                perturb_radius = 0.4  # Radius of perturbation circle
+                x += perturb_radius * np.cos(angle)
+                y += perturb_radius * np.sin(angle)
+            
+            agent_display_positions[agent] = (x, y)
+        
+        # Draw agents
+        for agent in self.agents:
+            x, y = agent_display_positions[agent]
             
             # Draw agent based on type
             if agent in self.vehicle_agents:

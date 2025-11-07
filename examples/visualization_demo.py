@@ -59,20 +59,23 @@ def main():
     
     # Run simulation for several steps
     print("\n5. Running simulation...")
-    num_steps = 20
+    num_cycles = 5  # Number of complete cycles through all step types
     
-    for step in range(num_steps):
-        # Determine actions based on step type
-        actions = {}
+    for cycle in range(num_cycles):
+        # Go through each step type in sequence
+        step_types = ['routing', 'unboarding', 'boarding', 'departing']
         
-        if env.step_type == 'routing':
-            # Vehicles set random destinations
-            for agent in env.agents:
-                if agent in env.vehicle_agents:
-                    pos = env.agent_positions[agent]
-                    if not isinstance(pos, tuple):  # At a node
-                        # Randomly choose to set destination or pass
-                        if np.random.random() < 0.5:
+        for step_type in step_types:
+            env.step_type = step_type
+            actions = {}
+            
+            if env.step_type == 'routing':
+                # Vehicles set random destinations
+                for agent in env.agents:
+                    if agent in env.vehicle_agents:
+                        pos = env.agent_positions[agent]
+                        if not isinstance(pos, tuple):  # At a node
+                            # Set destination to a random node
                             nodes = list(env.network.nodes())
                             dest_idx = np.random.randint(len(nodes) + 1)
                             actions[agent] = dest_idx  # 0 = None, 1..N = nodes
@@ -80,86 +83,80 @@ def main():
                             actions[agent] = 0
                     else:
                         actions[agent] = 0
-                else:
-                    actions[agent] = 0
-        
-        elif env.step_type == 'unboarding':
-            # Some humans unboard
-            for agent in env.agents:
-                if agent in env.human_agents:
-                    aboard = env.human_aboard.get(agent)
-                    if aboard is not None:
-                        vehicle_pos = env.agent_positions[aboard]
-                        if not isinstance(vehicle_pos, tuple):  # Vehicle at node
-                            # Randomly unboard or stay
-                            actions[agent] = 1 if np.random.random() < 0.3 else 0
-                        else:
-                            actions[agent] = 0
-                    else:
-                        actions[agent] = 0
-                else:
-                    actions[agent] = 0
-        
-        elif env.step_type == 'boarding':
-            # Humans try to board
-            for agent in env.agents:
-                if agent in env.human_agents:
-                    pos = env.agent_positions[agent]
-                    aboard = env.human_aboard.get(agent)
-                    if not isinstance(pos, tuple) and aboard is None:  # At node, not aboard
-                        # Find vehicles at same node
-                        vehicles_here = []
-                        for v in env.vehicle_agents:
-                            v_pos = env.agent_positions[v]
-                            if not isinstance(v_pos, tuple) and v_pos == pos:
-                                vehicles_here.append(v)
-                        if vehicles_here:
-                            # Try to board first vehicle
-                            actions[agent] = 1
-                        else:
-                            actions[agent] = 0
-                    else:
-                        actions[agent] = 0
-                else:
-                    actions[agent] = 0
-        
-        elif env.step_type == 'departing':
-            # Agents depart on random edges
-            for agent in env.agents:
-                pos = env.agent_positions[agent]
-                if not isinstance(pos, tuple):  # At a node
-                    if agent in env.vehicle_agents:
-                        outgoing = list(env.network.out_edges(pos))
-                        if outgoing and np.random.random() < 0.6:
-                            actions[agent] = 1  # Depart on first edge
-                        else:
-                            actions[agent] = 0
-                    elif agent in env.human_agents:
+            
+            elif env.step_type == 'unboarding':
+                # Some humans unboard
+                for agent in env.agents:
+                    if agent in env.human_agents:
                         aboard = env.human_aboard.get(agent)
-                        if aboard is None:  # Not aboard
-                            outgoing = list(env.network.out_edges(pos))
-                            if outgoing and np.random.random() < 0.4:
-                                actions[agent] = 1  # Walk on first edge
+                        if aboard is not None:
+                            vehicle_pos = env.agent_positions[aboard]
+                            if not isinstance(vehicle_pos, tuple):  # Vehicle at node
+                                # Randomly unboard or stay
+                                actions[agent] = 1 if np.random.random() < 0.3 else 0
                             else:
                                 actions[agent] = 0
                         else:
                             actions[agent] = 0
-                else:
-                    actions[agent] = 0
-        
-        # Take step
-        obs, rewards, terms, truncs, infos = env.step(actions)
-        
-        # Render (this will record the frame)
-        env.render()
-        
-        # Cycle through step types
-        step_types = ['routing', 'unboarding', 'boarding', 'departing']
-        current_idx = step_types.index(env.step_type)
-        env.step_type = step_types[(current_idx + 1) % len(step_types)]
-        
-        if (step + 1) % 5 == 0:
-            print(f"   Step {step + 1}/{num_steps} completed (time: {env.real_time:.2f})")
+                    else:
+                        actions[agent] = 0
+            
+            elif env.step_type == 'boarding':
+                # Humans try to board
+                for agent in env.agents:
+                    if agent in env.human_agents:
+                        pos = env.agent_positions[agent]
+                        aboard = env.human_aboard.get(agent)
+                        if not isinstance(pos, tuple) and aboard is None:  # At node, not aboard
+                            # Find vehicles at same node
+                            vehicles_here = []
+                            for v in env.vehicle_agents:
+                                v_pos = env.agent_positions[v]
+                                if not isinstance(v_pos, tuple) and v_pos == pos:
+                                    vehicles_here.append(v)
+                            if vehicles_here:
+                                # Try to board first vehicle
+                                actions[agent] = 1
+                            else:
+                                actions[agent] = 0
+                        else:
+                            actions[agent] = 0
+                    else:
+                        actions[agent] = 0
+            
+            elif env.step_type == 'departing':
+                # Agents depart on random edges - ensure some actually depart
+                for agent in env.agents:
+                    pos = env.agent_positions[agent]
+                    if not isinstance(pos, tuple):  # At a node
+                        if agent in env.vehicle_agents:
+                            outgoing = list(env.network.out_edges(pos))
+                            if outgoing:
+                                # Vehicles depart more frequently
+                                actions[agent] = 1 if np.random.random() < 0.8 else 0
+                            else:
+                                actions[agent] = 0
+                        elif agent in env.human_agents:
+                            aboard = env.human_aboard.get(agent)
+                            if aboard is None:  # Not aboard
+                                outgoing = list(env.network.out_edges(pos))
+                                if outgoing:
+                                    # Humans walk more frequently
+                                    actions[agent] = 1 if np.random.random() < 0.6 else 0
+                                else:
+                                    actions[agent] = 0
+                            else:
+                                actions[agent] = 0
+                    else:
+                        actions[agent] = 0
+            
+            # Take step
+            obs, rewards, terms, truncs, infos = env.step(actions)
+            
+            # Render (this will record the frame)
+            env.render()
+            
+        print(f"   Cycle {cycle + 1}/{num_cycles} completed (time: {env.real_time:.2f})")
     
     # Save video
     print("\n6. Saving video...")
