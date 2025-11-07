@@ -59,14 +59,15 @@ def main():
     
     # Run simulation for several steps
     print("\n5. Running simulation...")
-    num_cycles = 5  # Number of complete cycles through all step types
+    num_steps = 30  # Total number of departing steps (with visible motion)
     
     # Departure probabilities for visible motion
-    VEHICLE_DEPART_PROB = 0.8
-    HUMAN_WALK_PROB = 0.6
+    VEHICLE_DEPART_PROB = 0.9
+    HUMAN_WALK_PROB = 0.7
     
-    for cycle in range(num_cycles):
-        # Go through each step type in sequence
+    for step_num in range(num_steps):
+        # Cycle through step types: routing -> unboarding -> boarding -> departing
+        # Only render frames after departing (when motion happens)
         step_types = ['routing', 'unboarding', 'boarding', 'departing']
         
         for step_type in step_types:
@@ -97,7 +98,7 @@ def main():
                             vehicle_pos = env.agent_positions[aboard]
                             if not isinstance(vehicle_pos, tuple):  # Vehicle at node
                                 # Randomly unboard or stay
-                                actions[agent] = 1 if np.random.random() < 0.3 else 0
+                                actions[agent] = 1 if np.random.random() < 0.4 else 0
                             else:
                                 actions[agent] = 0
                         else:
@@ -157,14 +158,17 @@ def main():
             # Take step
             obs, rewards, terms, truncs, infos = env.step(actions)
             
-            # Render (this will record the frame)
-            env.render()
-            
-        print(f"   Cycle {cycle + 1}/{num_cycles} completed (time: {env.real_time:.2f})")
+            # Only render after departing step (when actual motion/time advance happens)
+            # This avoids recording many identical frames
+            if env.step_type == 'departing':
+                env.render()
+        
+        if (step_num + 1) % 10 == 0:
+            print(f"   Step {step_num + 1}/{num_steps} completed (time: {env.real_time:.2f})")
     
     # Save video
     print("\n6. Saving video...")
-    env.save_video('transport_simulation.mp4', fps=2)
+    env.save_video('transport_simulation.mp4', fps=3)
     
     # Save final frame
     print("\n7. Saving final frame...")

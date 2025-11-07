@@ -413,8 +413,11 @@ class parallel_env(ParallelEnv):
             )
             return
         
+        # Check if graphical rendering is enabled
+        use_graphical = getattr(self, '_use_graphical', False)
+        
         # Text-only rendering for backwards compatibility
-        if self.render_mode == "human" and not hasattr(self, '_use_graphical'):
+        if self.render_mode == "human" and not use_graphical:
             self._render_text()
             return
         
@@ -554,12 +557,12 @@ class parallel_env(ParallelEnv):
             agent_idx = position_counts[pos_key]
             position_counts[pos_key] += 1
             
-            # Add small perturbation if multiple agents at same location
+            # Add perturbation if multiple agents at same location
             # Arrange in a circle to make overlapping agents distinguishable
             if agent_idx > 0:
                 # Use max count of 4 to ensure reasonable spacing even with many agents
                 angle = 2 * np.pi * agent_idx / max(4, position_counts[pos_key])
-                perturb_radius = 0.4  # Radius of perturbation circle
+                perturb_radius = 1.2  # Radius of perturbation circle (larger for visibility)
                 x += perturb_radius * np.cos(angle)
                 y += perturb_radius * np.sin(angle)
             
@@ -660,10 +663,29 @@ class parallel_env(ParallelEnv):
         
         try:
             import imageio
-            imageio.mimsave(filename, self.frames, fps=fps)
-            print(f"Video saved to {filename}")
+            # Use imageio.mimsave with plugin='pillow' to avoid ffmpeg interpolation
+            # Or use ffmpeg with specific codec options
+            imageio.mimsave(
+                filename, 
+                self.frames, 
+                fps=fps,
+                codec='libx264',
+                quality=8,
+                pixelformat='yuv420p',
+                macro_block_size=1  # Disable automatic resizing
+            )
+            print(f"Video saved to {filename} ({len(self.frames)} frames)")
         except ImportError:
             print("imageio package required for video recording. Install with: pip install imageio[ffmpeg]")
+        except Exception as e:
+            print(f"Error saving video: {e}")
+            print(f"Trying alternative method...")
+            try:
+                import imageio
+                imageio.mimsave(filename, self.frames, fps=fps)
+                print(f"Video saved to {filename} ({len(self.frames)} frames)")
+            except Exception as e2:
+                print(f"Failed to save video: {e2}")
         finally:
             # Always reset state
             self._recording = False
