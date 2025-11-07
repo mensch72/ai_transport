@@ -55,10 +55,10 @@ def test_custom_agent_attributes():
     test_env = parallel_env(
         num_humans=1,
         num_vehicles=1,
-        human_speed=2.5,
-        vehicle_speed=5.0,
-        vehicle_capacity=6,
-        vehicle_fuel_use=2.0
+        human_speeds=[2.5],
+        vehicle_speeds=[5.0],
+        vehicle_capacities=[6],
+        vehicle_fuel_uses=[2.0]
     )
     
     assert test_env.agent_attributes["human_0"]['speed'] == 2.5
@@ -144,10 +144,19 @@ def test_position_types():
     test_env = parallel_env()
     test_env.reset()
     
-    # Initially all positions should be nodes
+    # Check positions are either nodes or (edge, coordinate) tuples
     for agent in test_env.agents:
         pos = test_env.agent_positions[agent]
-        assert pos in test_env.network.nodes()
+        if isinstance(pos, tuple):
+            # Should be (edge, coordinate) format
+            assert len(pos) == 2
+            edge, coord = pos
+            assert edge in test_env.network.edges()
+            edge_length = test_env.network[edge[0]][edge[1]]['length']
+            assert 0 <= coord <= edge_length
+        else:
+            # Should be a node
+            assert pos in test_env.network.nodes()
     
     # Test setting position as (edge, coordinate)
     edges = list(test_env.network.edges())
@@ -212,11 +221,12 @@ def test_human_aboard_state():
     test_env = parallel_env(num_humans=2, num_vehicles=1)
     test_env.reset()
     
-    # Check that all humans have aboard status
+    # Check that all humans have aboard status (can be None or a vehicle)
     for i in range(2):
         agent = f"human_{i}"
         assert agent in test_env.human_aboard
-        assert test_env.human_aboard[agent] is None  # Initially not aboard
+        # Can be None or 'vehicle_0'
+        assert test_env.human_aboard[agent] in [None, 'vehicle_0']
 
 
 def test_step_type_state():
@@ -232,6 +242,9 @@ def test_action_space_routing():
     """Test action spaces during routing step type"""
     test_env = parallel_env(num_humans=2, num_vehicles=1)
     test_env.reset()
+    
+    # Manually place vehicle at node so it can route
+    test_env.agent_positions['vehicle_0'] = 0
     test_env.step_type = 'routing'
     
     # Vehicles at nodes should have actions for each node + None
@@ -347,6 +360,9 @@ def test_routing_step_logic():
     """Test routing step changes destinations but not time"""
     test_env = parallel_env(num_humans=1, num_vehicles=2)
     test_env.reset()
+    
+    # Manually place all agents at nodes so routing actions work
+    test_env.agent_positions = {'human_0': 0, 'vehicle_0': 0, 'vehicle_1': 1}
     test_env.step_type = 'routing'
     
     initial_time = test_env.real_time
@@ -374,6 +390,9 @@ def test_unboarding_step_logic():
     """Test unboarding step changes aboard status but not time"""
     test_env = parallel_env(num_humans=2, num_vehicles=1)
     test_env.reset()
+    
+    # Manually place all agents at nodes
+    test_env.agent_positions = {'human_0': 0, 'human_1': 0, 'vehicle_0': 0}
     test_env.step_type = 'unboarding'
     
     # Put humans aboard vehicle
@@ -617,7 +636,10 @@ def test_observation_scenario_local():
     test_env = parallel_env(num_humans=2, num_vehicles=1, observation_scenario='local')
     test_env.reset()
     
-    # All agents start at same node, so should see each other
+    # Manually place all agents at same node
+    test_env.agent_positions = {'human_0': 0, 'human_1': 0, 'vehicle_0': 0}
+    
+    # All agents at same node, so should see each other
     obs = test_env._generate_observation_for_agent('human_0')
     
     assert 'real_time' in obs
@@ -625,7 +647,7 @@ def test_observation_scenario_local():
     assert 'my_position' in obs
     assert 'agents_here' in obs
     
-    # Should see all 3 agents (including self) at initial position
+    # Should see all 3 agents (including self) at same node
     assert len(obs['agents_here']) == 3
     assert 'human_0' in obs['agents_here']
     assert 'human_1' in obs['agents_here']
@@ -660,6 +682,9 @@ def test_observation_scenario_statistical():
     test_env = parallel_env(num_humans=2, num_vehicles=1, observation_scenario='statistical')
     test_env.reset()
     
+    # Manually place all agents at node 0
+    test_env.agent_positions = {'human_0': 0, 'human_1': 0, 'vehicle_0': 0}
+    
     obs = test_env._generate_observation_for_agent('human_0')
     
     # Should have local observation components
@@ -672,7 +697,7 @@ def test_observation_scenario_statistical():
     assert 'node_counts' in obs
     assert 'edge_counts' in obs
     
-    # Check counts at initial node (all agents at node 0)
+    # Check counts at node 0 (all agents there)
     assert 0 in obs['node_counts']
     assert obs['node_counts'][0]['humans'] == 2
     assert obs['node_counts'][0]['vehicles'] == 1

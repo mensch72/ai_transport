@@ -14,7 +14,7 @@ from pettingzoo.utils import parallel_to_aec, wrappers
 
 
 def env(render_mode=None, num_humans=2, num_vehicles=1, network=None,
-        human_speed=1.0, vehicle_speed=2.0, vehicle_capacity=4, vehicle_fuel_use=1.0,
+        human_speeds=None, vehicle_speeds=None, vehicle_capacities=None, vehicle_fuel_uses=None,
         observation_scenario='full'):
     """
     The env function often wraps the environment in wrappers by default.
@@ -27,10 +27,10 @@ def env(render_mode=None, num_humans=2, num_vehicles=1, network=None,
         num_humans=num_humans,
         num_vehicles=num_vehicles,
         network=network,
-        human_speed=human_speed,
-        vehicle_speed=vehicle_speed,
-        vehicle_capacity=vehicle_capacity,
-        vehicle_fuel_use=vehicle_fuel_use,
+        human_speeds=human_speeds,
+        vehicle_speeds=vehicle_speeds,
+        vehicle_capacities=vehicle_capacities,
+        vehicle_fuel_uses=vehicle_fuel_uses,
         observation_scenario=observation_scenario
     )
     # This wrapper is only for environments which print results to the terminal
@@ -45,7 +45,7 @@ def env(render_mode=None, num_humans=2, num_vehicles=1, network=None,
 
 
 def raw_env(render_mode=None, num_humans=2, num_vehicles=1, network=None,
-            human_speed=1.0, vehicle_speed=2.0, vehicle_capacity=4, vehicle_fuel_use=1.0,
+            human_speeds=None, vehicle_speeds=None, vehicle_capacities=None, vehicle_fuel_uses=None,
             observation_scenario='full'):
     """
     To support the AEC API, the raw_env() function just uses the from_parallel
@@ -56,10 +56,10 @@ def raw_env(render_mode=None, num_humans=2, num_vehicles=1, network=None,
         num_humans=num_humans,
         num_vehicles=num_vehicles,
         network=network,
-        human_speed=human_speed,
-        vehicle_speed=vehicle_speed,
-        vehicle_capacity=vehicle_capacity,
-        vehicle_fuel_use=vehicle_fuel_use,
+        human_speeds=human_speeds,
+        vehicle_speeds=vehicle_speeds,
+        vehicle_capacities=vehicle_capacities,
+        vehicle_fuel_uses=vehicle_fuel_uses,
         observation_scenario=observation_scenario
     )
     env = parallel_to_aec(env)
@@ -78,10 +78,10 @@ class parallel_env(ParallelEnv):
         num_humans=2,
         num_vehicles=1,
         network=None,
-        human_speed=1.0,
-        vehicle_speed=2.0,
-        vehicle_capacity=4,
-        vehicle_fuel_use=1.0,
+        human_speeds=None,
+        vehicle_speeds=None,
+        vehicle_capacities=None,
+        vehicle_fuel_uses=None,
         observation_scenario='full'
     ):
         """
@@ -100,6 +100,10 @@ class parallel_env(ParallelEnv):
                 - 'full': Every agent observes the full state
                 - 'local': Agents observe only agents at same node/edge
                 - 'statistical': As local, plus counts of agents at all nodes/edges
+            human_speeds: List of speeds for each human, or None to use default (1.0 for all)
+            vehicle_speeds: List of speeds for each vehicle, or None to use default (2.0 for all)
+            vehicle_capacities: List of capacities for each vehicle, or None to use default (4 for all)
+            vehicle_fuel_uses: List of fuel uses for each vehicle, or None to use default (1.0 for all)
         """
         self.num_humans = num_humans
         self.num_vehicles = num_vehicles
@@ -123,17 +127,37 @@ class parallel_env(ParallelEnv):
             zip(self.possible_agents, list(range(len(self.possible_agents))))
         )
         
-        # Agent attributes
+        # Agent attributes - use lists if provided, otherwise use defaults
+        if human_speeds is None:
+            human_speeds = [1.0] * num_humans
+        elif len(human_speeds) != num_humans:
+            raise ValueError(f"human_speeds must have length {num_humans}, got {len(human_speeds)}")
+            
+        if vehicle_speeds is None:
+            vehicle_speeds = [2.0] * num_vehicles
+        elif len(vehicle_speeds) != num_vehicles:
+            raise ValueError(f"vehicle_speeds must have length {num_vehicles}, got {len(vehicle_speeds)}")
+            
+        if vehicle_capacities is None:
+            vehicle_capacities = [4] * num_vehicles
+        elif len(vehicle_capacities) != num_vehicles:
+            raise ValueError(f"vehicle_capacities must have length {num_vehicles}, got {len(vehicle_capacities)}")
+            
+        if vehicle_fuel_uses is None:
+            vehicle_fuel_uses = [1.0] * num_vehicles
+        elif len(vehicle_fuel_uses) != num_vehicles:
+            raise ValueError(f"vehicle_fuel_uses must have length {num_vehicles}, got {len(vehicle_fuel_uses)}")
+        
         self.agent_attributes = {}
-        for agent in human_agents:
+        for i, agent in enumerate(human_agents):
             self.agent_attributes[agent] = {
-                'speed': human_speed
+                'speed': float(human_speeds[i])
             }
-        for agent in vehicle_agents:
+        for i, agent in enumerate(vehicle_agents):
             self.agent_attributes[agent] = {
-                'speed': vehicle_speed,
-                'capacity': vehicle_capacity,
-                'fuel_use': vehicle_fuel_use
+                'speed': float(vehicle_speeds[i]),
+                'capacity': int(vehicle_capacities[i]),
+                'fuel_use': float(vehicle_fuel_uses[i])
             }
         
         # Network - if not provided, create a simple default network
@@ -160,6 +184,10 @@ class parallel_env(ParallelEnv):
         self.vehicle_destinations = None
         self.human_aboard = None  # For each human: None or vehicle ID
         self.step_type = None  # One of: 'routing', 'unboarding', 'boarding', 'departing'
+        
+        # Cached network observation data (constant throughout episode)
+        self._cached_network_nodes = None
+        self._cached_network_edges = None
 
     def _create_default_network(self):
         """Create a simple default network for testing"""
@@ -261,6 +289,7 @@ class parallel_env(ParallelEnv):
         """
         Initialize agent positions randomly on the network.
         Some agents at nodes, others on edges.
+        Also randomly initialize human aboard status.
         
         Args:
             seed: Random seed for reproducibility
@@ -289,6 +318,19 @@ class parallel_env(ParallelEnv):
                 edge_length = self.network[edge[0]][edge[1]]['length']
                 coord = float(rng.uniform(0, edge_length))
                 self.agent_positions[agent] = (edge, coord)
+        
+        # Initialize human aboard status
+        # Randomly assign some humans to be aboard vehicles
+        for human in self.human_agents:
+            # 30% chance of being aboard a vehicle (if there are any vehicles)
+            if self.vehicle_agents and rng.random() < 0.3:
+                # Choose a random vehicle
+                vehicle = list(self.vehicle_agents)[rng.randint(len(self.vehicle_agents))]
+                self.human_aboard[human] = vehicle
+                # Sync human position with vehicle
+                self.agent_positions[human] = self.agent_positions[vehicle]
+            else:
+                self.human_aboard[human] = None
 
     
     def _validate_network(self):
@@ -732,7 +774,8 @@ class parallel_env(ParallelEnv):
         """
         Reset needs to initialize the `agents` attribute and must set up the
         environment so that render(), and step() can be called without issues.
-        Returns the observations for each agent
+        Returns the observations for each agent.
+        Positions and aboard status are initialized randomly.
         """
         if seed is not None:
             self.np_random, self.np_random_seed = seeding.np_random(seed)
@@ -742,18 +785,24 @@ class parallel_env(ParallelEnv):
         # Initialize state components
         self.real_time = 0.0
         
-        # Initialize agent positions - all agents start at first node
-        nodes = list(self.network.nodes())
-        self.agent_positions = {agent: nodes[0] for agent in self.agents}
+        # Initialize empty dictionaries first (needed by initialize_random_positions)
+        self.agent_positions = {}
+        self.human_aboard = {}
+        
+        # Initialize agent positions and aboard status randomly
+        # This will place agents at random nodes or on random edges
+        # and randomly assign some humans to be aboard vehicles
+        self.initialize_random_positions(seed=seed)
         
         # Initialize vehicle destinations - all start with None
         self.vehicle_destinations = {agent: None for agent in self.vehicle_agents}
         
-        # Initialize human aboard status - all start with None (not aboard)
-        self.human_aboard = {agent: None for agent in self.human_agents}
-        
         # Initialize step type - start with routing
         self.step_type = 'routing'
+        
+        # Cache network data for observations (constant throughout episode)
+        self._cached_network_nodes = list(self.network.nodes())
+        self._cached_network_edges = [(u, v, dict(data)) for u, v, data in self.network.edges(data=True)]
         
         # Create observations based on scenario
         observations = self._generate_observations()
@@ -788,25 +837,39 @@ class parallel_env(ParallelEnv):
             'vehicle_destinations': dict(self.vehicle_destinations),
             'human_aboard': dict(self.human_aboard),
             'agent_attributes': dict(self.agent_attributes),
-            'network_nodes': list(self.network.nodes()),
-            'network_edges': [(u, v, dict(data)) for u, v, data in self.network.edges(data=True)],
+            'network_nodes': self._cached_network_nodes,
+            'network_edges': self._cached_network_edges,
             'action_mapping': self._get_action_mapping(agent)
         }
         return obs
     
     def _generate_local_observation(self, agent):
         """
-        Local observation: agent observes only agents at same node or on same edge,
+        Local observation: agent observes only agents at same node or on same edge (ignoring coordinate on edge),
         along with their state components and attributes.
         """
         agent_pos = self.agent_positions[agent]
+        
+        # Determine location for comparison
+        # If on edge, compare just the edge tuple (ignoring coordinate)
+        if isinstance(agent_pos, tuple):
+            agent_location = agent_pos[0]  # Just the edge tuple
+        else:
+            agent_location = agent_pos  # Node
         
         # Find agents at same location
         agents_at_location = []
         for other_agent in self.agents:
             other_pos = self.agent_positions[other_agent]
-            # Check if at same location (node or edge)
-            if agent_pos == other_pos:
+            
+            # Determine other agent's location
+            if isinstance(other_pos, tuple):
+                other_location = other_pos[0]  # Just the edge tuple
+            else:
+                other_location = other_pos  # Node
+            
+            # Check if at same location
+            if agent_location == other_location:
                 agents_at_location.append(other_agent)
         
         # Build observation with info about agents at same location
