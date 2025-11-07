@@ -12,6 +12,35 @@ The environment operates on a network represented as a NetworkX directed graph w
 - Node attribute: `name`
 - Edge attributes: `length`, `speed`, `capacity`
 
+### Random Network Generation
+
+The environment provides a method to generate random 2D networks:
+
+```python
+network = env.create_random_2d_network(
+    num_nodes=15,
+    bidirectional_prob=0.5,
+    speed_mean=5.0,
+    capacity_mean=10.0,
+    coord_std=10.0,
+    seed=42
+)
+```
+
+This method:
+1. Generates random 2D coordinates from a Gaussian distribution
+2. Computes Delaunay triangulation for connectivity
+3. Makes each edge either unidirectional (random direction) or bidirectional (with specified probability)
+4. Computes edge lengths from Euclidean distance
+5. Draws speeds and capacities from exponential distributions
+
+Agent positions can also be initialized randomly:
+```python
+env.initialize_random_positions(seed=42)
+```
+
+This places agents randomly at nodes or on edges.
+
 ## Installation
 
 ```bash
@@ -220,4 +249,5 @@ python examples/basic_example.py
 python examples/action_spaces_demo.py
 python examples/step_logic_demo.py
 python examples/observations_demo.py
+python examples/random_network_demo.py
 ```

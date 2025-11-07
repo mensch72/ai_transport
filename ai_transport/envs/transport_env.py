@@ -167,6 +167,121 @@ class parallel_env(ParallelEnv):
         G.add_edge(2, 0, length=12.0, speed=5.0, capacity=10)
         return G
     
+    def create_random_2d_network(self, num_nodes=10, bidirectional_prob=0.3, 
+                                 speed_mean=5.0, capacity_mean=10.0, 
+                                 coord_mean=0.0, coord_std=10.0, seed=None):
+        """
+        Create a 2D random network using Delaunay triangulation.
+        
+        Args:
+            num_nodes: Number of nodes to generate
+            bidirectional_prob: Probability that an edge is bidirectional (otherwise random direction)
+            speed_mean: Mean for exponential distribution of edge speeds
+            capacity_mean: Mean for exponential distribution of edge capacities
+            coord_mean: Mean for 2D Gaussian distribution of node coordinates
+            coord_std: Standard deviation for 2D Gaussian distribution of node coordinates
+            seed: Random seed for reproducibility
+            
+        Returns:
+            NetworkX DiGraph with nodes having 'name', 'x', 'y' attributes
+            and edges having 'length', 'speed', 'capacity' attributes
+        """
+        from scipy.spatial import Delaunay
+        
+        # Set random seed if provided
+        if seed is not None:
+            rng = np.random.RandomState(seed)
+        else:
+            rng = np.random.RandomState()
+        
+        # Generate random 2D coordinates from Gaussian distribution
+        coords = rng.normal(loc=coord_mean, scale=coord_std, size=(num_nodes, 2))
+        
+        # Compute Delaunay triangulation
+        tri = Delaunay(coords)
+        
+        # Create directed graph
+        G = nx.DiGraph()
+        
+        # Add nodes with coordinates and names
+        for i in range(num_nodes):
+            G.add_node(i, name=f"Node_{i}", x=float(coords[i, 0]), y=float(coords[i, 1]))
+        
+        # Process triangulation edges
+        edges_set = set()
+        for simplex in tri.simplices:
+            # Each simplex is a triangle with 3 vertices
+            for i in range(3):
+                u = simplex[i]
+                v = simplex[(i + 1) % 3]
+                
+                # Store as undirected edge (smaller index first)
+                edge = (min(u, v), max(u, v))
+                edges_set.add(edge)
+        
+        # Add edges with attributes
+        for u, v in edges_set:
+            # Compute Euclidean length from coordinates
+            dx = coords[v, 0] - coords[u, 0]
+            dy = coords[v, 1] - coords[u, 1]
+            length = float(np.sqrt(dx**2 + dy**2))
+            
+            # Draw speed and capacity from exponential distributions
+            speed = float(rng.exponential(scale=speed_mean))
+            capacity = float(rng.exponential(scale=capacity_mean))
+            
+            # Ensure minimum values
+            speed = max(speed, 0.1)
+            capacity = max(capacity, 1.0)
+            
+            # Decide direction(s)
+            if rng.random() < bidirectional_prob:
+                # Bidirectional
+                G.add_edge(u, v, length=length, speed=speed, capacity=capacity)
+                G.add_edge(v, u, length=length, speed=speed, capacity=capacity)
+            else:
+                # Unidirectional in random direction
+                if rng.random() < 0.5:
+                    G.add_edge(u, v, length=length, speed=speed, capacity=capacity)
+                else:
+                    G.add_edge(v, u, length=length, speed=speed, capacity=capacity)
+        
+        return G
+    
+    def initialize_random_positions(self, seed=None):
+        """
+        Initialize agent positions randomly on the network.
+        Some agents at nodes, others on edges.
+        
+        Args:
+            seed: Random seed for reproducibility
+        """
+        if seed is not None:
+            rng = np.random.RandomState(seed)
+        else:
+            rng = np.random.RandomState()
+        
+        nodes = list(self.network.nodes())
+        edges = list(self.network.edges())
+        
+        if not nodes:
+            raise ValueError("Network has no nodes")
+        
+        for agent in self.agents:
+            # Randomly decide if agent is at node or on edge
+            if rng.random() < 0.5 or not edges:
+                # Place at random node
+                node = nodes[rng.randint(len(nodes))]
+                self.agent_positions[agent] = node
+            else:
+                # Place on random edge at random coordinate
+                edge_idx = rng.randint(len(edges))
+                edge = edges[edge_idx]
+                edge_length = self.network[edge[0]][edge[1]]['length']
+                coord = float(rng.uniform(0, edge_length))
+                self.agent_positions[agent] = (edge, coord)
+
+    
     def _validate_network(self):
         """Validate that the network has all required attributes"""
         # Check node attributes

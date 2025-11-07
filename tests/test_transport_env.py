@@ -731,3 +731,141 @@ def test_observations_in_step():
         assert isinstance(obs[agent], dict)
         assert 'real_time' in obs[agent]
         assert 'step_type' in obs[agent]
+
+
+def test_create_random_2d_network():
+    """Test creating a random 2D network"""
+    test_env = parallel_env(num_humans=1, num_vehicles=1)
+    
+    network = test_env.create_random_2d_network(num_nodes=5, seed=42)
+    
+    # Check network has nodes
+    assert len(network.nodes()) == 5
+    
+    # Check all nodes have required attributes
+    for node in network.nodes():
+        assert 'name' in network.nodes[node]
+        assert 'x' in network.nodes[node]
+        assert 'y' in network.nodes[node]
+    
+    # Check network has edges
+    assert len(network.edges()) > 0
+    
+    # Check all edges have required attributes
+    for u, v in network.edges():
+        edge_data = network[u][v]
+        assert 'length' in edge_data
+        assert 'speed' in edge_data
+        assert 'capacity' in edge_data
+        assert edge_data['length'] > 0
+        assert edge_data['speed'] > 0
+        assert edge_data['capacity'] > 0
+
+
+def test_create_random_2d_network_bidirectional():
+    """Test bidirectional probability in random network"""
+    test_env = parallel_env(num_humans=1, num_vehicles=1)
+    
+    # With high bidirectional probability
+    network_high = test_env.create_random_2d_network(
+        num_nodes=5, bidirectional_prob=0.9, seed=42
+    )
+    
+    # With low bidirectional probability
+    network_low = test_env.create_random_2d_network(
+        num_nodes=5, bidirectional_prob=0.1, seed=42
+    )
+    
+    # Count bidirectional edges (where both (u,v) and (v,u) exist)
+    def count_bidirectional(G):
+        count = 0
+        for u, v in G.edges():
+            if G.has_edge(v, u):
+                count += 1
+        return count // 2  # Divide by 2 since we count each pair twice
+    
+    bidir_high = count_bidirectional(network_high)
+    bidir_low = count_bidirectional(network_low)
+    
+    # High prob should have more bidirectional edges than low prob
+    # (This is probabilistic but with seed should be deterministic)
+    assert bidir_high >= bidir_low
+
+
+def test_create_random_2d_network_length_calculation():
+    """Test that edge lengths are computed from coordinates"""
+    test_env = parallel_env(num_humans=1, num_vehicles=1)
+    
+    network = test_env.create_random_2d_network(num_nodes=5, seed=42)
+    
+    # Check that lengths match Euclidean distance
+    for u, v in network.edges():
+        x1, y1 = network.nodes[u]['x'], network.nodes[u]['y']
+        x2, y2 = network.nodes[v]['x'], network.nodes[v]['y']
+        expected_length = np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+        actual_length = network[u][v]['length']
+        assert abs(actual_length - expected_length) < 1e-6
+
+
+def test_initialize_random_positions():
+    """Test initializing random agent positions"""
+    test_env = parallel_env(num_humans=2, num_vehicles=1)
+    test_env.reset()
+    
+    # Initialize random positions
+    test_env.initialize_random_positions(seed=42)
+    
+    # Check all agents have positions
+    for agent in test_env.agents:
+        assert agent in test_env.agent_positions
+        pos = test_env.agent_positions[agent]
+        
+        # Position should be either a node or (edge, coordinate) tuple
+        if isinstance(pos, tuple):
+            assert len(pos) == 2
+            edge, coord = pos
+            assert edge in test_env.network.edges()
+            edge_length = test_env.network[edge[0]][edge[1]]['length']
+            assert 0 <= coord <= edge_length
+        else:
+            assert pos in test_env.network.nodes()
+
+
+def test_initialize_random_positions_distribution():
+    """Test that random positions distribute between nodes and edges"""
+    test_env = parallel_env(num_humans=10, num_vehicles=10)
+    test_env.reset()
+    
+    # Initialize random positions
+    test_env.initialize_random_positions(seed=42)
+    
+    # Count agents at nodes vs on edges
+    at_nodes = sum(1 for pos in test_env.agent_positions.values() if not isinstance(pos, tuple))
+    on_edges = sum(1 for pos in test_env.agent_positions.values() if isinstance(pos, tuple))
+    
+    # Both should be non-zero (with high probability given 20 agents)
+    assert at_nodes > 0
+    assert on_edges > 0
+
+
+def test_random_network_integration():
+    """Test using random network in environment"""
+    test_env = parallel_env(num_humans=2, num_vehicles=1)
+    
+    # Create random network
+    network = test_env.create_random_2d_network(num_nodes=6, seed=42)
+    
+    # Create new env with this network
+    test_env2 = parallel_env(num_humans=2, num_vehicles=1, network=network)
+    test_env2.reset(seed=42)
+    
+    # Initialize random positions
+    test_env2.initialize_random_positions(seed=42)
+    
+    # Check environment works with random positions
+    test_env2.step_type = 'routing'
+    actions = {agent: 0 for agent in test_env2.agents}
+    obs, rewards, terms, truncs, infos = test_env2.step(actions)
+    
+    # Should complete without errors
+    assert len(obs) == len(test_env2.agents)
