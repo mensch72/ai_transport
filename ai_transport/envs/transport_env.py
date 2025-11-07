@@ -789,7 +789,8 @@ class parallel_env(ParallelEnv):
             'human_aboard': dict(self.human_aboard),
             'agent_attributes': dict(self.agent_attributes),
             'network_nodes': list(self.network.nodes()),
-            'network_edges': [(u, v, dict(data)) for u, v, data in self.network.edges(data=True)]
+            'network_edges': [(u, v, dict(data)) for u, v, data in self.network.edges(data=True)],
+            'action_mapping': self._get_action_mapping(agent)
         }
         return obs
     
@@ -813,7 +814,8 @@ class parallel_env(ParallelEnv):
             'real_time': float(self.real_time),
             'step_type': self.step_type,
             'my_position': agent_pos,
-            'agents_here': {}
+            'agents_here': {},
+            'action_mapping': self._get_action_mapping(agent)
         }
         
         for other_agent in agents_at_location:
@@ -869,6 +871,101 @@ class parallel_env(ParallelEnv):
         obs['edge_counts'] = edge_counts
         
         return obs
+    
+    def _get_action_mapping(self, agent):
+        """
+        Generate a mapping from action indices to their meanings for the given agent.
+        This makes the action space transparent to the agent.
+        
+        Returns a dict with:
+        - 'description': human-readable description of what each action does
+        - 'details': specific IDs/objects that each action index refers to
+        """
+        if self.step_type is None or agent not in self.agents:
+            return {'description': {0: 'pass'}, 'details': {}}
+        
+        mapping = {'description': {}, 'details': {}}
+        
+        if self.step_type == 'routing':
+            if agent in self.vehicle_agents:
+                pos = self.agent_positions.get(agent)
+                if pos is not None and not isinstance(pos, tuple):
+                    # Vehicle at node can set destination
+                    mapping['description'][0] = 'set_destination_none'
+                    mapping['details'][0] = None
+                    nodes = list(self.network.nodes())
+                    for i, node in enumerate(nodes):
+                        mapping['description'][i + 1] = f'set_destination_node'
+                        mapping['details'][i + 1] = node
+                    return mapping
+            # All other agents can only pass
+            mapping['description'][0] = 'pass'
+            return mapping
+        
+        elif self.step_type == 'unboarding':
+            if agent in self.human_agents:
+                aboard = self.human_aboard.get(agent)
+                if aboard is not None:
+                    vehicle_pos = self.agent_positions.get(aboard)
+                    if vehicle_pos is not None and not isinstance(vehicle_pos, tuple):
+                        # Human aboard vehicle at node can unboard
+                        mapping['description'][0] = 'pass'
+                        mapping['description'][1] = 'unboard'
+                        return mapping
+            # All other agents can only pass
+            mapping['description'][0] = 'pass'
+            return mapping
+        
+        elif self.step_type == 'boarding':
+            if agent in self.human_agents:
+                pos = self.agent_positions.get(agent)
+                aboard = self.human_aboard.get(agent)
+                if pos is not None and not isinstance(pos, tuple) and aboard is None:
+                    # Human at node can board vehicles at same node
+                    vehicles_at_node = [
+                        v for v in self.vehicle_agents 
+                        if self.agent_positions.get(v) == pos
+                    ]
+                    mapping['description'][0] = 'pass'
+                    mapping['details'][0] = None
+                    for i, vehicle_id in enumerate(vehicles_at_node):
+                        mapping['description'][i + 1] = 'board_vehicle'
+                        mapping['details'][i + 1] = vehicle_id
+                    return mapping
+            # All other agents can only pass
+            mapping['description'][0] = 'pass'
+            return mapping
+        
+        elif self.step_type == 'departing':
+            pos = self.agent_positions.get(agent)
+            if pos is not None and not isinstance(pos, tuple):
+                if agent in self.vehicle_agents:
+                    # Vehicle at node can depart into outgoing edges
+                    outgoing_edges = list(self.network.out_edges(pos))
+                    mapping['description'][0] = 'pass'
+                    mapping['details'][0] = None
+                    for i, edge in enumerate(outgoing_edges):
+                        mapping['description'][i + 1] = 'depart_edge'
+                        mapping['details'][i + 1] = edge
+                    return mapping
+                elif agent in self.human_agents:
+                    aboard = self.human_aboard.get(agent)
+                    if aboard is None:
+                        # Human at node (not aboard) can walk into outgoing edges
+                        outgoing_edges = list(self.network.out_edges(pos))
+                        mapping['description'][0] = 'pass'
+                        mapping['details'][0] = None
+                        for i, edge in enumerate(outgoing_edges):
+                            mapping['description'][i + 1] = 'walk_edge'
+                            mapping['details'][i + 1] = edge
+                        return mapping
+            # All other agents can only pass
+            mapping['description'][0] = 'pass'
+            return mapping
+        
+        # Default fallback
+        mapping['description'][0] = 'pass'
+        return mapping
 
     def step(self, actions):
         """
