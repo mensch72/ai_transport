@@ -110,6 +110,40 @@ env = parallel_env(
 )
 ```
 
+## Step Logic
+
+The environment processes actions and updates state based on the current `step_type`:
+
+### Routing Step
+- **State Changes**: Vehicles at nodes can change their `vehicle_destination` to `None` or any node
+- **Time**: Real time does NOT advance
+- **Example**: Vehicle sets destination to node 2
+
+### Unboarding Step
+- **State Changes**: Humans aboard vehicles at nodes can change their `aboard` status to `None`
+- **Time**: Real time does NOT advance
+- **Example**: Human unboards from vehicle
+
+### Boarding Step
+- **State Changes**: Humans at nodes attempt to board vehicles at the same node
+- **Capacity Constraint**: Humans are processed in random order; only board if vehicle not full (humans aboard < capacity)
+- **Time**: Real time does NOT advance
+- **Example**: Two humans try to board a vehicle with capacity 2; both succeed
+
+### Departing Step
+- **State Changes**: 
+  1. Agents at nodes that don't pass move to `(chosen_edge, 0.0)`
+  2. For all agents on edges, compute remaining duration: `(edge_length - coordinate) / speed`
+  3. Find minimum duration `delta_t` and advance `real_time` by that amount
+  4. Move all agents on edges: `new_coord = coord + speed * delta_t`
+  5. Agents reaching edge end (coord ≈ length) move to target node
+  6. Humans aboard vehicles have their position synchronized with their vehicle
+- **Speed**: Vehicles use edge speed; humans use their own speed
+- **Time**: Real time ADVANCES by minimum remaining duration
+- **Example**: Vehicle and human depart; vehicle reaches destination first, human still on edge
+
+See `examples/step_logic_demo.py` for a complete demonstration.
+
 ## Package Structure
 
 ```
@@ -143,11 +177,13 @@ Run tests:
 pytest tests/
 ```
 
-Run example:
+Run examples:
 ```bash
 python examples/basic_example.py
+python examples/action_spaces_demo.py
+python examples/step_logic_demo.py
 ```
 
 ## Note
 
-Step logic is not yet implemented. The environment currently provides the basic structure and state management but does not process actions to update agent positions or calculate rewards. This functionality will be added in future updates.
+Observations and rewards are not yet implemented. The environment currently returns placeholder zero observations and rewards. These will be specified and implemented in future updates.

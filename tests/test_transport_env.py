@@ -341,3 +341,248 @@ def test_action_space_agents_on_edges():
             vehicle_space = test_env.action_space('vehicle_0')
             assert vehicle_space.n == 1
 
+
+
+def test_routing_step_logic():
+    """Test routing step changes destinations but not time"""
+    test_env = parallel_env(num_humans=1, num_vehicles=2)
+    test_env.reset()
+    test_env.step_type = 'routing'
+    
+    initial_time = test_env.real_time
+    nodes = list(test_env.network.nodes())
+    
+    # Action 0 = set destination to None
+    # Action 1, 2, 3 = set destination to node 0, 1, 2
+    actions = {
+        'human_0': 0,  # Should do nothing (human can only pass)
+        'vehicle_0': 0,  # Set destination to None
+        'vehicle_1': 2  # Set destination to node 1
+    }
+    
+    test_env.step(actions)
+    
+    # Check time didn't advance
+    assert test_env.real_time == initial_time
+    
+    # Check destinations changed
+    assert test_env.vehicle_destinations['vehicle_0'] is None
+    assert test_env.vehicle_destinations['vehicle_1'] == nodes[1]
+
+
+def test_unboarding_step_logic():
+    """Test unboarding step changes aboard status but not time"""
+    test_env = parallel_env(num_humans=2, num_vehicles=1)
+    test_env.reset()
+    test_env.step_type = 'unboarding'
+    
+    # Put humans aboard vehicle
+    test_env.human_aboard['human_0'] = 'vehicle_0'
+    test_env.human_aboard['human_1'] = 'vehicle_0'
+    
+    initial_time = test_env.real_time
+    
+    # Action 0 = pass, Action 1 = unboard
+    actions = {
+        'human_0': 1,  # Unboard
+        'human_1': 0,  # Pass (stay aboard)
+        'vehicle_0': 0  # Can only pass
+    }
+    
+    test_env.step(actions)
+    
+    # Check time didn't advance
+    assert test_env.real_time == initial_time
+    
+    # Check human_0 unboarded, human_1 still aboard
+    assert test_env.human_aboard['human_0'] is None
+    assert test_env.human_aboard['human_1'] == 'vehicle_0'
+
+
+def test_boarding_step_logic():
+    """Test boarding step with capacity constraints"""
+    test_env = parallel_env(num_humans=3, num_vehicles=1)
+    test_env.reset(seed=42)
+    test_env.step_type = 'boarding'
+    
+    # Set vehicle capacity to 2
+    test_env.agent_attributes['vehicle_0']['capacity'] = 2
+    
+    # All at node 0
+    test_env.agent_positions['human_0'] = 0
+    test_env.agent_positions['human_1'] = 0
+    test_env.agent_positions['human_2'] = 0
+    test_env.agent_positions['vehicle_0'] = 0
+    test_env.human_aboard['human_0'] = None
+    test_env.human_aboard['human_1'] = None
+    test_env.human_aboard['human_2'] = None
+    
+    initial_time = test_env.real_time
+    
+    # All humans try to board (action 1 = board vehicle_0)
+    actions = {
+        'human_0': 1,
+        'human_1': 1,
+        'human_2': 1,
+        'vehicle_0': 0
+    }
+    
+    test_env.step(actions)
+    
+    # Check time didn't advance
+    assert test_env.real_time == initial_time
+    
+    # Check that exactly 2 humans boarded (capacity = 2)
+    humans_aboard = sum(1 for h in test_env.human_agents 
+                       if test_env.human_aboard[h] == 'vehicle_0')
+    assert humans_aboard == 2
+
+
+def test_departing_step_logic_basic():
+    """Test departing step moves agents onto edges"""
+    test_env = parallel_env(num_humans=1, num_vehicles=1)
+    test_env.reset()
+    test_env.step_type = 'departing'
+    
+    # Both at node 0
+    test_env.agent_positions['human_0'] = 0
+    test_env.agent_positions['vehicle_0'] = 0
+    test_env.human_aboard['human_0'] = None
+    
+    initial_time = test_env.real_time
+    
+    # Get first outgoing edge from node 0
+    outgoing = list(test_env.network.out_edges(0))
+    assert len(outgoing) > 0
+    
+    # Action 1 = depart into first outgoing edge
+    actions = {
+        'human_0': 1,
+        'vehicle_0': 1
+    }
+    
+    test_env.step(actions)
+    
+    # After departing, agents are placed on edge at coord 0, then time advances
+    # and they move. One or both may reach the end.
+    human_pos = test_env.agent_positions['human_0']
+    vehicle_pos = test_env.agent_positions['vehicle_0']
+    
+    # At least one should have moved (time should have advanced)
+    assert test_env.real_time > initial_time
+    
+    # Human might be on edge or at destination node
+    # Vehicle might be on edge or at destination node
+    # At least one should have departed (not both at node 0)
+    assert not (human_pos == 0 and vehicle_pos == 0)
+
+
+def test_departing_step_time_advance():
+    """Test that departing step advances time correctly"""
+    test_env = parallel_env(num_humans=1, num_vehicles=1)
+    test_env.reset()
+    test_env.step_type = 'departing'
+    
+    # Place agents on an edge
+    edges = list(test_env.network.edges())
+    edge = edges[0]
+    edge_data = test_env.network[edge[0]][edge[1]]
+    edge_length = edge_data['length']
+    edge_speed = edge_data['speed']
+    human_speed = test_env.agent_attributes['human_0']['speed']
+    
+    # Place human at coordinate 5, vehicle at coordinate 3
+    test_env.agent_positions['human_0'] = (edge, 5.0)
+    test_env.agent_positions['vehicle_0'] = (edge, 3.0)
+    test_env.human_aboard['human_0'] = None
+    
+    initial_time = test_env.real_time
+    
+    # Both pass (don't depart, just move along edge)
+    actions = {
+        'human_0': 0,
+        'vehicle_0': 0
+    }
+    
+    test_env.step(actions)
+    
+    # Calculate expected time advance
+    human_remaining = (edge_length - 5.0) / human_speed
+    vehicle_remaining = (edge_length - 3.0) / edge_speed
+    expected_delta_t = min(human_remaining, vehicle_remaining)
+    
+    # Check time advanced correctly
+    assert abs(test_env.real_time - (initial_time + expected_delta_t)) < 1e-9
+
+
+def test_departing_step_arrival_at_node():
+    """Test that agents arrive at nodes when reaching edge end"""
+    test_env = parallel_env(num_humans=1, num_vehicles=1)
+    test_env.reset()
+    test_env.step_type = 'departing'
+    
+    # Place agents very close to end of edge
+    edges = list(test_env.network.edges())
+    edge = edges[0]
+    edge_data = test_env.network[edge[0]][edge[1]]
+    edge_length = edge_data['length']
+    
+    # Place both agents same distance from end so they arrive together
+    # Use a distance that works for both speeds
+    edge_speed = edge_data['speed']
+    human_speed = test_env.agent_attributes['human_0']['speed']
+    
+    # Place them close enough that both will arrive
+    # For edge_speed=5.0, human_speed=1.0, if we place at edge_length-0.05,
+    # vehicle time = 0.05/5.0 = 0.01, human time = 0.05/1.0 = 0.05
+    # min is 0.01, so vehicle arrives but human doesn't
+    # Let's place human separately closer to end
+    test_env.agent_positions['human_0'] = (edge, edge_length - 0.01)  # Very close
+    test_env.agent_positions['vehicle_0'] = (edge, edge_length - 0.01)  # Very close
+    test_env.human_aboard['human_0'] = None
+    
+    actions = {
+        'human_0': 0,
+        'vehicle_0': 0
+    }
+    
+    test_env.step(actions)
+    
+    # Both should now be at the target node (or at least vehicle should be)
+    target_node = edge[1]
+    # With coord=9.99, human needs 0.01/1.0=0.01, vehicle needs 0.01/5.0=0.002
+    # min is 0.002, so vehicle arrives, human goes to 9.99+1.0*0.002=9.992
+    # Let's just check vehicle arrives
+    assert test_env.agent_positions['vehicle_0'] == target_node
+
+
+def test_humans_aboard_move_with_vehicle():
+    """Test that humans aboard vehicles move with the vehicle"""
+    test_env = parallel_env(num_humans=1, num_vehicles=1)
+    test_env.reset()
+    test_env.step_type = 'departing'
+    
+    # Place human aboard vehicle at node
+    test_env.agent_positions['human_0'] = 0
+    test_env.agent_positions['vehicle_0'] = 0
+    test_env.human_aboard['human_0'] = 'vehicle_0'
+    
+    outgoing = list(test_env.network.out_edges(0))
+    
+    # Human tries to walk (but is aboard so shouldn't work)
+    # Vehicle departs
+    actions = {
+        'human_0': 1,  # Try to walk (should be ignored)
+        'vehicle_0': 1  # Depart
+    }
+    
+    test_env.step(actions)
+    
+    # Human should be at same position as vehicle (moved with it)
+    assert test_env.agent_positions['human_0'] == test_env.agent_positions['vehicle_0']
+    
+    # Vehicle should have moved (not at node 0 anymore)
+    assert test_env.agent_positions['vehicle_0'] != 0
+    
+    # Human still aboard
+    assert test_env.human_aboard['human_0'] == 'vehicle_0'

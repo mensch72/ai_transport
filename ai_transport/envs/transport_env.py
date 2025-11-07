@@ -330,15 +330,23 @@ class parallel_env(ParallelEnv):
         - truncations
         - infos
         dicts where each dict looks like {agent_1: item_1, agent_2: item_2}
-        
-        NOTE: Step logic is not yet implemented as per requirements.
         """
         # If a user passes in actions with no agents, then just return empty observations, etc.
         if not actions:
             self.agents = []
             return {}, {}, {}, {}, {}
 
-        # Placeholder step logic - to be implemented later
+        # Process actions based on current step_type
+        if self.step_type == 'routing':
+            self._process_routing_actions(actions)
+        elif self.step_type == 'unboarding':
+            self._process_unboarding_actions(actions)
+        elif self.step_type == 'boarding':
+            self._process_boarding_actions(actions)
+        elif self.step_type == 'departing':
+            self._process_departing_actions(actions)
+        
+        # Placeholder observations and rewards - to be implemented later
         observations = {agent: np.zeros(10, dtype=np.float32) for agent in self.agents}
         rewards = {agent: 0.0 for agent in self.agents}
         terminations = {agent: False for agent in self.agents}
@@ -349,3 +357,167 @@ class parallel_env(ParallelEnv):
             self.render()
             
         return observations, rewards, terminations, truncations, infos
+    
+    def _process_routing_actions(self, actions):
+        """
+        Process routing step: vehicles at nodes can change their destination.
+        Real time does not advance.
+        """
+        for agent, action in actions.items():
+            if agent in self.vehicle_agents:
+                pos = self.agent_positions.get(agent)
+                # Only vehicles at nodes can route
+                if pos is not None and not isinstance(pos, tuple):
+                    if action == 0:
+                        # Set destination to None
+                        self.vehicle_destinations[agent] = None
+                    else:
+                        # Set destination to node (action - 1)
+                        nodes = list(self.network.nodes())
+                        if 1 <= action <= len(nodes):
+                            self.vehicle_destinations[agent] = nodes[action - 1]
+    
+    def _process_unboarding_actions(self, actions):
+        """
+        Process unboarding step: humans aboard vehicles at nodes can unboard.
+        Real time does not advance.
+        """
+        for agent, action in actions.items():
+            if agent in self.human_agents:
+                aboard = self.human_aboard.get(agent)
+                if aboard is not None:
+                    vehicle_pos = self.agent_positions.get(aboard)
+                    # Only humans aboard vehicles at nodes can unboard
+                    if vehicle_pos is not None and not isinstance(vehicle_pos, tuple):
+                        if action == 1:  # action 0 is pass, action 1 is unboard
+                            self.human_aboard[agent] = None
+    
+    def _process_boarding_actions(self, actions):
+        """
+        Process boarding step: humans at nodes can board vehicles at same node.
+        Humans are processed in random order. Only board if vehicle not full.
+        Real time does not advance.
+        """
+        # Get humans who want to board and their chosen vehicles
+        boarding_requests = []
+        for agent, action in actions.items():
+            if agent in self.human_agents and action > 0:  # action 0 is pass
+                pos = self.agent_positions.get(agent)
+                aboard = self.human_aboard.get(agent)
+                # Only humans at nodes and not aboard can board
+                if pos is not None and not isinstance(pos, tuple) and aboard is None:
+                    # Find vehicles at same node
+                    vehicles_at_node = [
+                        v for v in self.vehicle_agents 
+                        if self.agent_positions.get(v) == pos
+                    ]
+                    # action - 1 gives the index in vehicles_at_node list
+                    vehicle_idx = action - 1
+                    if 0 <= vehicle_idx < len(vehicles_at_node):
+                        chosen_vehicle = vehicles_at_node[vehicle_idx]
+                        boarding_requests.append((agent, chosen_vehicle))
+        
+        # Process boarding requests in random order
+        if boarding_requests:
+            self.np_random.shuffle(boarding_requests)
+            for human, vehicle in boarding_requests:
+                # Count humans already aboard this vehicle
+                humans_aboard = sum(1 for h in self.human_agents 
+                                   if self.human_aboard.get(h) == vehicle)
+                capacity = self.agent_attributes[vehicle]['capacity']
+                
+                # Board if vehicle not full
+                if humans_aboard < capacity:
+                    self.human_aboard[human] = vehicle
+    
+    def _process_departing_actions(self, actions):
+        """
+        Process departing step: vehicles and humans (not aboard) at nodes can depart/walk into edges.
+        All agents on edges move. Real time advances by minimum remaining duration on edges.
+        """
+        # First, process departing actions for agents at nodes
+        for agent, action in actions.items():
+            if action > 0:  # action 0 is pass
+                pos = self.agent_positions.get(agent)
+                # Check if agent is at a node
+                if pos is not None and not isinstance(pos, tuple):
+                    # Get outgoing edges from this node
+                    outgoing_edges = list(self.network.out_edges(pos))
+                    edge_idx = action - 1
+                    
+                    if 0 <= edge_idx < len(outgoing_edges):
+                        chosen_edge = outgoing_edges[edge_idx]
+                        
+                        # Vehicles can always depart
+                        if agent in self.vehicle_agents:
+                            self.agent_positions[agent] = (chosen_edge, 0.0)
+                        # Humans can only depart if not aboard
+                        elif agent in self.human_agents:
+                            aboard = self.human_aboard.get(agent)
+                            if aboard is None:
+                                self.agent_positions[agent] = (chosen_edge, 0.0)
+        
+        # Now compute movement for all agents on edges
+        # Find minimum remaining duration on edges
+        remaining_durations = []
+        
+        for agent in self.agents:
+            pos = self.agent_positions.get(agent)
+            if pos is not None and isinstance(pos, tuple):
+                edge, coord = pos
+                edge_data = self.network[edge[0]][edge[1]]
+                edge_length = edge_data['length']
+                remaining_distance = edge_length - coord
+                
+                # Determine agent's speed
+                if agent in self.vehicle_agents:
+                    # Vehicles use the edge's speed
+                    speed = edge_data['speed']
+                elif agent in self.human_agents:
+                    # Humans use their own speed
+                    speed = self.agent_attributes[agent]['speed']
+                else:
+                    speed = 1.0  # Fallback
+                
+                if speed > 0:
+                    duration = remaining_distance / speed
+                    remaining_durations.append(duration)
+        
+        # If there are agents on edges, advance time and move them
+        if remaining_durations:
+            delta_t = min(remaining_durations)
+            self.real_time += delta_t
+            
+            # Move all agents on edges
+            for agent in self.agents:
+                pos = self.agent_positions.get(agent)
+                if pos is not None and isinstance(pos, tuple):
+                    edge, coord = pos
+                    edge_data = self.network[edge[0]][edge[1]]
+                    
+                    # Determine agent's speed
+                    if agent in self.vehicle_agents:
+                        speed = edge_data['speed']
+                    elif agent in self.human_agents:
+                        speed = self.agent_attributes[agent]['speed']
+                    else:
+                        speed = 1.0  # Fallback
+                    
+                    # Update coordinate
+                    new_coord = coord + speed * delta_t
+                    edge_length = edge_data['length']
+                    
+                    # Check if agent has reached the end of the edge
+                    if abs(new_coord - edge_length) < 1e-9:  # Use small epsilon for float comparison
+                        # Agent arrives at target node
+                        target_node = edge[1]
+                        self.agent_positions[agent] = target_node
+                    else:
+                        # Agent still on edge
+                        self.agent_positions[agent] = (edge, new_coord)
+        
+        # Update positions of humans aboard vehicles to match vehicle positions
+        for human in self.human_agents:
+            aboard = self.human_aboard.get(human)
+            if aboard is not None:
+                self.agent_positions[human] = self.agent_positions[aboard]
