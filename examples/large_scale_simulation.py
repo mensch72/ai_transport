@@ -42,7 +42,7 @@ def main():
     NUM_NODES = 60
     NUM_VEHICLES = 20
     NUM_HUMANS = 120
-    NUM_STEPS = 500
+    NUM_STEPS = 5000
     VIDEO_FRAMES = 50  # Record every 10 steps
     SEED = 42
     
@@ -189,8 +189,7 @@ def main():
                 # Get target position
                 target = policy.target
                 target_pos = np.array([network.nodes[target]['x'], network.nodes[target]['y']])
-                print(human_id, target)
-                
+
                 # Compute distance
                 distance = np.linalg.norm(human_pos - target_pos)
                 total_distance += distance

@@ -154,7 +154,7 @@ class TargetDestinationHumanPolicy(HumanPolicy):
         super().__init__(agent_id, seed)
         self.network = network
         self.target_change_rate = target_change_rate
-        self.target_destination = None
+        self.target = None
         self.last_real_time = 0.0
         self.nodes = list(network.nodes())
         
@@ -178,9 +178,9 @@ class TargetDestinationHumanPolicy(HumanPolicy):
     
     def _update_target(self, real_time: float):
         """Update target destination based on time elapsed and change rate."""
-        if self.target_destination is None:
+        if self.target is None:
             # Initialize target
-            self.target_destination = self.rng.choice(self.nodes)
+            self.target = self.rng.choice(self.nodes)
             self.last_real_time = real_time
             return
         
@@ -190,7 +190,7 @@ class TargetDestinationHumanPolicy(HumanPolicy):
         
         if self.rng.random() < change_prob:
             # Change to new random target
-            self.target_destination = self.rng.choice(self.nodes)
+            self.target = self.rng.choice(self.nodes)
             self.last_real_time = real_time
     
     def get_action(self, observation: Dict[str, Any], action_space_size: int):
@@ -230,7 +230,7 @@ class TargetDestinationHumanPolicy(HumanPolicy):
     
     def _get_boarding_action(self, observation: Dict, action_mapping: Dict, action_space_size: int):
         """Choose vehicle whose destination is closest to target."""
-        if action_space_size <= 1 or self.target_destination is None:
+        if action_space_size <= 1 or self.target is None:
             return 0, "Passing (no target or no vehicles available)"
         
         # Get vehicle destinations from observation
@@ -246,20 +246,20 @@ class TargetDestinationHumanPolicy(HumanPolicy):
             if vehicle_id:
                 vehicle_dest = vehicle_destinations.get(vehicle_id)
                 if vehicle_dest is not None:
-                    distance = self._euclidean_distance(vehicle_dest, self.target_destination)
+                    distance = self._euclidean_distance(vehicle_dest, self.target)
                     if distance < best_distance:
                         best_distance = distance
                         best_action = action_idx
                         best_vehicle = vehicle_id
         
         if best_action > 0:
-            return best_action, f"Boarding {best_vehicle} (heading toward target {self.target_destination}, distance {best_distance:.1f})"
+            return best_action, f"Boarding {best_vehicle} (heading toward target {self.target}, distance {best_distance:.1f})"
         else:
-            return 0, f"Passing (no vehicles heading toward target {self.target_destination})"
+            return 0, f"Passing (no vehicles heading toward target {self.target})"
     
     def _get_departing_action(self, observation: Dict, action_mapping: Dict, action_space_size: int):
         """Choose edge leading toward target destination."""
-        if action_space_size <= 1 or self.target_destination is None:
+        if action_space_size <= 1 or self.target is None:
             return 0, "Passing (no target or no edges available)"
         
         my_position = observation.get('my_position')
@@ -268,8 +268,8 @@ class TargetDestinationHumanPolicy(HumanPolicy):
         
         # Get current node
         current_node = my_position
-        if current_node == self.target_destination:
-            return 0, f"Passing (already at target {self.target_destination})"
+        if current_node == self.target:
+            return 0, f"Passing (already at target {self.target})"
         
         # Find edge that leads toward target
         details = action_mapping.get('details', {})
@@ -282,18 +282,18 @@ class TargetDestinationHumanPolicy(HumanPolicy):
             if edge and isinstance(edge, tuple):
                 # Edge is (source, target)
                 target_node = edge[1]
-                distance = self._euclidean_distance(target_node, self.target_destination)
+                distance = self._euclidean_distance(target_node, self.target)
                 if distance < best_distance:
                     best_distance = distance
                     best_action = action_idx
                     best_edge = edge
         
         if best_action > 0:
-            return best_action, f"Walking toward target {self.target_destination} via edge {best_edge}"
+            return best_action, f"Walking toward target {self.target} via edge {best_edge}"
         else:
-            return 0, f"Passing (no edge toward target {self.target_destination})"
+            return 0, f"Passing (no edge toward target {self.target})"
     
     def reset(self):
         """Reset policy state (target destination and time)."""
-        self.target_destination = None
+        self.target = None
         self.last_real_time = 0.0
