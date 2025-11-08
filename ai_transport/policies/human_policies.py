@@ -165,6 +165,10 @@ class TargetDestinationHumanPolicy(HumanPolicy):
                 network.nodes[node].get('x', 0.0),
                 network.nodes[node].get('y', 0.0)
             )
+
+        # Set initial target destination
+        self._update_target(0.0)
+
     
     def _euclidean_distance(self, node1, node2) -> float:
         """Compute Euclidean distance between two nodes."""

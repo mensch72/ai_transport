@@ -94,7 +94,7 @@ def main():
     # Human policies with varied target change rates
     for i in range(NUM_HUMANS):
         human_id = f'human_{i}'
-        target_change_rate = np.random.uniform(0.05, 0.15)  # Change target every 7-20 seconds
+        target_change_rate = 1e-10 #np.random.uniform(0.05, 0.15)  # Change target every 7-20 seconds
         policies[human_id] = TargetDestinationHumanPolicy(
             human_id, network, target_change_rate=target_change_rate, seed=SEED + i
         )
@@ -188,6 +188,7 @@ def main():
                 # Get target position
                 target = policy.target
                 target_pos = np.array([network.nodes[target]['x'], network.nodes[target]['y']])
+                print(human_id, target)
                 
                 # Compute distance
                 distance = np.linalg.norm(human_pos - target_pos)
