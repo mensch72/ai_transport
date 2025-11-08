@@ -58,7 +58,7 @@ def main():
     env_temp = parallel_env(num_humans=NUM_HUMANS, num_vehicles=NUM_VEHICLES)
     network = env_temp.create_random_2d_network(
         num_nodes=NUM_NODES,
-        spread=30.0,
+        coord_std=30.0,  # Use coord_std instead of spread for network size
         bidirectional_prob=0.5,
         seed=SEED
     )
