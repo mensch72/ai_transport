@@ -141,8 +141,9 @@ def main():
         # Step environment
         obs, rewards, terms, truncs, infos = env.step(actions)
         
-        # Render frame for video every N steps
-        if step % (NUM_STEPS // VIDEO_FRAMES) == 0:
+        # Render frame for video only after departing steps (when visual state changes)
+        # This prevents duplicate frames from routing/unboarding/boarding steps
+        if env.step_type == 'departing' and frame_count < VIDEO_FRAMES:
             env.render()
             frame_count += 1
         
