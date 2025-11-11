@@ -29,10 +29,10 @@ def main():
         num_humans=2,
         num_vehicles=1,
         network=G,
-        human_speed=1.5,
-        vehicle_speed=3.0,
-        vehicle_capacity=5,
-        vehicle_fuel_use=1.2
+        human_speeds=[1.5, 1.5],
+        vehicle_speeds=[3.0],
+        vehicle_capacities=[5],
+        vehicle_fuel_uses=[1.2]
     )
     
     print("=" * 70)
