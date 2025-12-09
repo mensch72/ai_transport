@@ -1112,6 +1112,11 @@ class parallel_env(ParallelEnv):
         Args:
             filename: Output filename (can be .mp4 or .gif)
             fps: Frames per second
+            
+        Note:
+            MP4 encoding uses H.264 codec (libx264) with quality=8 (0-10 scale,
+            where 0 is best) and yuv420p pixel format for maximum compatibility
+            with video players and web browsers.
         """
         if not self.frames:
             print("No frames recorded. Call start_video_recording() first.")
@@ -1125,8 +1130,15 @@ class parallel_env(ParallelEnv):
                 import imageio
                 
                 # imageio directly writes numpy arrays to video - very fast!
-                imageio.mimsave(filename, self.frames, fps=fps, codec='libx264', 
-                               quality=8, pixelformat='yuv420p')
+                # Using H.264 codec with yuv420p for broad compatibility
+                imageio.mimsave(
+                    filename, 
+                    self.frames, 
+                    fps=fps, 
+                    codec='libx264',
+                    quality=8,  # 0-10 scale, 8 is good balance of quality/size
+                    pixelformat='yuv420p'  # Most compatible pixel format
+                )
                 print(f"✓ Video saved to {filename} ({len(self.frames)} frames)")
                 return
             except Exception as e:
