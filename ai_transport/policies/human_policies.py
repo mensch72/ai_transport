@@ -436,10 +436,33 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
             # Compute shortest path based on edge lengths (not vehicle travel times)
             try:
                 path = nx.shortest_path(self.network, node, target, weight='length')
+                
+                # Validate path is a list
+                if not isinstance(path, list):
+                    continue
+                if len(path) < 2:
+                    continue
+                
                 # Compute walking time: sum of (edge_length / walking_speed)
                 walking_time = 0.0
                 for i in range(len(path) - 1):
-                    u, v = self._normalize_node_id(path[i]), self._normalize_node_id(path[i + 1])
+                    try:
+                        u = path[i]
+                        v = path[i + 1]
+                    except (IndexError, KeyError, TypeError) as e:
+                        # Skip if we can't access path elements
+                        break
+                    
+                    # Normalize node IDs - handle various types
+                    if isinstance(u, (list, tuple, dict)):
+                        # Skip if u is a complex type (shouldn't happen but be defensive)
+                        continue
+                    if isinstance(v, (list, tuple, dict)):
+                        # Skip if v is a complex type (shouldn't happen but be defensive)
+                        continue
+                    
+                    u = self._normalize_node_id(u)
+                    v = self._normalize_node_id(v)
                     
                     if self.network.has_edge(u, v):
                         edge_length = self.network[u][v].get('length', 1.0)
@@ -447,6 +470,9 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
                 
                 min_time = min(min_time, walking_time)
             except nx.NetworkXNoPath:
+                continue
+            except (TypeError, ValueError, KeyError, IndexError) as e:
+                # Handle any type conversion or access errors
                 continue
         
         return min_time
@@ -541,7 +567,7 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
                 if destination is not None:
                     # Compute shortest duration path for this vehicle
                     path = self._compute_shortest_duration_path(current_node, destination)
-                    if path:
+                    if path and isinstance(path, list):  # Validate path is a list
                         nodes_on_path = self._get_nodes_on_path(path)
                         vehicle_info.append((vehicle_id, destination, path, nodes_on_path, action_idx))
                         all_candidate_nodes.update(nodes_on_path)
@@ -573,6 +599,10 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
                 # Find time for vehicle to reach best_z
                 # Get partial path from current_node to best_z
                 try:
+                    # Validate path is a list before using .index()
+                    if not isinstance(path, list):
+                        continue
+                        
                     z_index = path.index(best_z)
                     partial_path = path[:z_index + 1]
                     time_to_z = self._compute_path_duration(partial_path)
@@ -581,7 +611,8 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
                         best_time_to_z = time_to_z
                         best_vehicle_id = vehicle_id
                         best_vehicle_action = action_idx
-                except (ValueError, IndexError):
+                except (ValueError, IndexError, AttributeError):
+                    continue
                     continue
         
         if best_vehicle_action is not None:
