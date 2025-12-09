@@ -10,6 +10,8 @@ This example demonstrates:
 
 Requirements:
     pip install stable-baselines3
+
+Note: Uses MultiInputPolicy because TransportGymWrapper returns dict observations.
 """
 
 import numpy as np
@@ -118,10 +120,10 @@ def main():
     # Create vectorized environment
     env = DummyVecEnv([lambda: make_env(seed=42)])
     
-    # Create PPO model with simple configuration
+    # Create PPO model with MultiInputPolicy for dict observation space
     print("Initializing PPO model...")
     model = PPO(
-        "MlpPolicy",
+        "MultiInputPolicy",  # Use MultiInputPolicy for dict observations
         env,
         verbose=1,
         learning_rate=3e-4,
