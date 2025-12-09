@@ -163,7 +163,7 @@ def _cluster_kmeans(
     nodes, coords = _extract_coordinates(G)
     
     # Perform k-means clustering
-    kmeans = KMeans(n_clusters=k, random_state=random_state, n_init=10)
+    kmeans = KMeans(n_clusters=k, random_state=random_state)
     labels = kmeans.fit_predict(coords)
     
     # Build node_to_cluster mapping
@@ -296,6 +296,9 @@ def visualize_clusters(
     num_clusters = cluster_info['num_clusters']
     centroids = cluster_info['centroids']
     
+    # Create node-to-index mapping for O(1) lookups
+    node_to_idx = {node: i for i, node in enumerate(nodes)}
+    
     # Create color map
     colormap = cm.get_cmap(cmap)
     colors = [colormap(node_to_cluster[node] / max(1, num_clusters - 1)) 
@@ -303,8 +306,8 @@ def visualize_clusters(
     
     # Draw edges
     for u, v in G.edges():
-        u_idx = nodes.index(u)
-        v_idx = nodes.index(v)
+        u_idx = node_to_idx[u]
+        v_idx = node_to_idx[v]
         ax.plot(
             [coords[u_idx, 0], coords[v_idx, 0]],
             [coords[u_idx, 1], coords[v_idx, 1]],
@@ -317,7 +320,7 @@ def visualize_clusters(
     # Highlight centroids
     if show_centroids:
         for cluster_id, centroid_node in centroids.items():
-            idx = nodes.index(centroid_node)
+            idx = node_to_idx[centroid_node]
             ax.scatter(
                 coords[idx, 0], coords[idx, 1],
                 c='black', s=node_size * 2, marker='*', zorder=3,
