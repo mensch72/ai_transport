@@ -172,6 +172,9 @@ class parallel_env(ParallelEnv):
         
         # Initialize np_random_seed for action space
         self.np_random_seed = None
+        # Initialize np_random (will be properly seeded in reset)
+        from gymnasium.utils import seeding
+        self.np_random, _ = seeding.np_random(None)
         
         # Rendering state
         self.fig = None
