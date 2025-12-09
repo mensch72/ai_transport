@@ -42,6 +42,7 @@ dev = [
 ]
 video = [
     "imageio[ffmpeg]>=2.9.0",
+    "imageio-ffmpeg>=0.4.0",
 ]
 
 [project.urls]
