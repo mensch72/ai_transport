@@ -157,13 +157,21 @@ def main():
         model.save("transport_ppo_fleet_interrupted")
         print("✓ Model saved to 'transport_ppo_fleet_interrupted.zip'")
     
-    # Evaluate the trained policy
+    # Evaluate the trained policy with video recording
     print("\n" + "=" * 70)
-    print("Evaluating trained policy...")
+    print("Evaluating trained policy (with video recording)...")
     print("=" * 70)
     
+    # Create evaluation environment with rendering enabled
     eval_env = make_env(seed=100)
+    # Enable render mode for the underlying environment
+    eval_env.env.render_mode = 'rgb_array'
+    
     obs, _ = eval_env.reset()
+    
+    # Start video recording
+    eval_env.env.start_video_recording()
+    print("  ✓ Video recording started")
     
     total_reward = 0
     steps = 0
@@ -180,6 +188,9 @@ def main():
         total_reward += reward
         steps += 1
         
+        # Render frame for video
+        eval_env.render()
+        
         if done or truncated:
             break
     
@@ -187,6 +198,12 @@ def main():
     print(f"  Total steps: {steps}")
     print(f"  Total reward: {total_reward:.2f}")
     print(f"  Average reward per step: {total_reward/steps:.4f}")
+    
+    # Save video
+    print(f"\nSaving video...")
+    video_filename = "transport_ppo_evaluation.mp4"
+    eval_env.env.save_video(filename=video_filename, fps=20)
+    print(f"  ✓ Video saved to '{video_filename}'")
     
     eval_env.close()
     env.close()
