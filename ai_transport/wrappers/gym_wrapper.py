@@ -302,17 +302,83 @@ class TransportGymWrapper(gym.Env):
         return obs, reward, terminated, truncated, info
     
     def _get_observation(self, obs_dict: Dict) -> Dict:
-        """Convert multi-agent observations to single-agent observation."""
-        # Simple version: return first vehicle's observation
-        # In practice, you'd want to flatten/aggregate this properly
-        if self.vehicle_agents and self.vehicle_agents[0] in obs_dict:
-            obs = obs_dict[self.vehicle_agents[0]]
-            # Add step type index for easier encoding
-            step_types = {'routing': 0, 'unboarding': 1, 'boarding': 2, 'departing': 3}
-            obs['step_type_idx'] = step_types.get(obs.get('step_type', 'routing'), 0)
-            return obs
-        else:
-            return {'step_type': self.env.step_type, 'step_type_idx': 0}
+        """Convert multi-agent observations to single-agent observation.
+        
+        Returns observation matching the defined observation_space with keys:
+        - step_type: int (0-3 for routing, unboarding, boarding, departing)
+        - real_time: array with current simulation time
+        - vehicle_positions: array of vehicle positions
+        - human_positions: array of human positions
+        """
+        # Map step type to index
+        step_types = {'routing': 0, 'unboarding': 1, 'boarding': 2, 'departing': 3}
+        step_type_idx = step_types.get(self.env.step_type, 0)
+        
+        # Extract positions for vehicles and humans
+        vehicle_positions = []
+        for vehicle in self.vehicle_agents:
+            pos = self.env.agent_positions.get(vehicle)
+            if pos is None:
+                vehicle_positions.append([0.0, 0.0])
+            elif isinstance(pos, tuple):
+                # On edge - use approximate position
+                edge, coord = pos
+                # For simplicity, just use node coordinates
+                if edge and len(edge) >= 2:
+                    node = edge[0]
+                    node_data = self.env.network.nodes.get(node, {})
+                    x = float(node_data.get('x', 0.0))
+                    y = float(node_data.get('y', 0.0))
+                    vehicle_positions.append([x, y])
+                else:
+                    vehicle_positions.append([0.0, 0.0])
+            else:
+                # At node
+                node_data = self.env.network.nodes.get(pos, {})
+                x = float(node_data.get('x', 0.0))
+                y = float(node_data.get('y', 0.0))
+                vehicle_positions.append([x, y])
+        
+        human_positions = []
+        for human in self.human_agents:
+            pos = self.env.agent_positions.get(human)
+            if pos is None:
+                human_positions.append([0.0, 0.0])
+            elif isinstance(pos, tuple):
+                # On edge
+                edge, coord = pos
+                if edge and len(edge) >= 2:
+                    node = edge[0]
+                    node_data = self.env.network.nodes.get(node, {})
+                    x = float(node_data.get('x', 0.0))
+                    y = float(node_data.get('y', 0.0))
+                    human_positions.append([x, y])
+                else:
+                    human_positions.append([0.0, 0.0])
+            else:
+                # At node
+                node_data = self.env.network.nodes.get(pos, {})
+                x = float(node_data.get('x', 0.0))
+                y = float(node_data.get('y', 0.0))
+                human_positions.append([x, y])
+        
+        # Pad or truncate to match observation space dimensions
+        while len(vehicle_positions) < self.num_vehicles:
+            vehicle_positions.append([0.0, 0.0])
+        vehicle_positions = vehicle_positions[:self.num_vehicles]
+        
+        while len(human_positions) < self.num_humans:
+            human_positions.append([0.0, 0.0])
+        human_positions = human_positions[:self.num_humans]
+        
+        obs = {
+            'step_type': step_type_idx,
+            'real_time': np.array([self.env.real_time], dtype=np.float32),
+            'vehicle_positions': np.array(vehicle_positions, dtype=np.float32),
+            'human_positions': np.array(human_positions, dtype=np.float32),
+        }
+        
+        return obs
     
     def render(self):
         """Render the environment."""
