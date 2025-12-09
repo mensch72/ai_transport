@@ -1,3 +1,13 @@
+"""
+Tests for HeuristicRoutingHumanPolicy.
+
+NOTE: To see verbose test output with print statements, run:
+    pytest tests/test_heuristic_policy.py -vs
+
+The -s flag disables output capturing so you can see the detailed test output.
+Without -s, pytest captures all print statements.
+"""
+
 import pytest
 import numpy as np
 import networkx as nx

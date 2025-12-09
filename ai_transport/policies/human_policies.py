@@ -537,9 +537,18 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
             return 0, "Passing (no vehicles available)"
         
         # Get current position (must be a node for boarding step)
+        # Handle both 'full' and 'local' observation scenarios
         my_position = observation.get('my_position')
+        if my_position is None:
+            # Full observation scenario - extract from agent_positions
+            agent_positions = observation.get('agent_positions', {})
+            my_position = agent_positions.get(self.agent_id)
+        
         if isinstance(my_position, tuple):
             return 0, "Passing (not at node)"
+        
+        if my_position is None:
+            return 0, "Passing (position unknown)"
         
         current_node = my_position
         
@@ -628,9 +637,18 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
         - Waits at current node (with probability p_wait)
         - Walks toward target on shortest walking path (with probability 1 - p_wait)
         """
+        # Get current position - handle both observation scenarios
         my_position = observation.get('my_position')
+        if my_position is None:
+            # Full observation scenario - extract from agent_positions
+            agent_positions = observation.get('agent_positions', {})
+            my_position = agent_positions.get(self.agent_id)
+        
         if isinstance(my_position, tuple):
             return 0, "Passing (already on edge)"
+        
+        if my_position is None:
+            return 0, "Passing (position unknown)"
         
         current_node = my_position
         

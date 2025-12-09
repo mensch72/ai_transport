@@ -11,10 +11,48 @@ This example shows:
 import os
 import networkx as nx
 from ai_transport import parallel_env
-from ai_transport.policies import (
-    HeuristicRoutingHumanPolicy,
-    ShortestPathVehiclePolicy
-)
+from ai_transport.policies import HeuristicRoutingHumanPolicy
+
+
+class SimpleVehiclePolicy:
+    """Simple vehicle policy that keeps destination and waits before departing."""
+    
+    def __init__(self, agent_id, destination, wait_cycles=2, seed=None):
+        self.agent_id = agent_id
+        self.destination = destination
+        self.wait_cycles = wait_cycles  # Number of departing steps to wait before actually departing
+        self.depart_count = 0
+        self.seed = seed
+    
+    def get_action(self, observation, action_space_size):
+        step_type = observation.get('step_type')
+        
+        if step_type == 'routing':
+            # Keep our destination - find the action that sets it
+            action_mapping = observation.get('action_mapping', {})
+            details = action_mapping.get('details', {})
+            for action_idx in range(action_space_size):
+                if details.get(action_idx) == self.destination:
+                    return action_idx, f"Keeping destination {self.destination}"
+            return 0, "Passing"
+        
+        elif step_type == 'departing':
+            # Wait a few cycles before departing to give humans time to board
+            if self.depart_count < self.wait_cycles:
+                self.depart_count += 1
+                return 0, f"Waiting at node (count {self.depart_count}/{self.wait_cycles})"
+            
+            # Now depart if we can
+            if action_space_size > 1:
+                # Take first available edge (action 1)
+                return 1, f"Departing toward destination {self.destination}"
+            return 0, "Passing"
+        
+        else:
+            return 0, "Passing"
+    
+    def reset(self):
+        self.depart_count = 0
 
 
 def main():
@@ -26,98 +64,67 @@ def main():
     print("\n1. Creating custom network...")
     G = nx.DiGraph()
     
-    # Create a network with clear paths:
-    #     1---2---3
-    #    /         \
-    #   0           4---5
-    #    \         /
-    #     6---7---8
+    # Create a simple linear network: 0 -> 1 -> 2 -> 3
+    # This ensures vehicles going to node 3 pass through nodes 1 and 2
+    G.add_node(0, name="Start", x=0.0, y=0.0)
+    G.add_node(1, name="Mid1", x=10.0, y=0.0)
+    G.add_node(2, name="Mid2", x=20.0, y=0.0)
+    G.add_node(3, name="End", x=30.0, y=0.0)
     
-    # Add nodes with coordinates
-    positions = {
-        0: (0, 0),
-        1: (5, 5),
-        2: (10, 5),
-        3: (15, 5),
-        4: (20, 0),
-        5: (25, 0),
-        6: (5, -5),
-        7: (10, -5),
-        8: (15, -5)
-    }
-    
-    for node_id, (x, y) in positions.items():
-        G.add_node(node_id, name=f"Node_{node_id}", x=x, y=y)
-    
-    # Add edges with length and speed
-    edges = [
-        (0, 1), (1, 2), (2, 3), (3, 4), (4, 5),  # Upper path
-        (0, 6), (6, 7), (7, 8), (8, 4),  # Lower path
-        (1, 6), (2, 7), (3, 8)  # Cross connections
-    ]
-    
-    for u, v in edges:
-        x1, y1 = positions[u]
-        x2, y2 = positions[v]
-        length = ((x2 - x1)**2 + (y2 - y1)**2)**0.5
-        G.add_edge(u, v, length=length, speed=3.0, capacity=10)
+    # Add edges
+    G.add_edge(0, 1, length=10.0, speed=3.0, capacity=10)
+    G.add_edge(1, 2, length=10.0, speed=3.0, capacity=10)
+    G.add_edge(2, 3, length=10.0, speed=3.0, capacity=10)
     
     # Create environment
     env = parallel_env(
-        num_humans=3,
-        num_vehicles=2,
+        num_humans=2,
+        num_vehicles=1,
         network=G,
+        observation_scenario='full',  # Important: need full observations to see vehicle destinations!
         render_mode="human"
     )
     
     env.reset(seed=42)
     
-    # Hand-craft initial positions: all humans and vehicles at node 0
+    # Hand-craft initial positions: all agents at node 0
     print("\n2. Setting up hand-crafted initial scenario...")
     print("   - All agents start at node 0")
-    print("   - Humans have different target destinations")
-    print("   - Vehicles will head toward targets, allowing humans to board")
+    print("   - Vehicle will head to node 3")
+    print("   - Humans want to reach node 3")
     
     for agent in env.agents:
         env.agent_positions[agent] = 0
         if agent in env.human_agents:
             env.human_aboard[agent] = None
         if agent in env.vehicle_agents:
-            env.vehicle_destinations[agent] = None
+            # Pre-set vehicle destination to node 3
+            env.vehicle_destinations[agent] = 3
     
     print(f"\n   Network: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
-    print(f"   Agents: 3 humans, 2 vehicles (all starting at node 0)")
+    print(f"   Agents: 2 humans, 1 vehicle (all starting at node 0)")
+    print(f"   Pre-set destination: vehicle_0 -> node 3")
     
     # Create policies
     print("\n3. Creating policies...")
     
-    # Define target nodes for humans
-    # human_0 wants to reach node 5 (far end of upper path)
-    # human_1 wants to reach node 4 (junction of paths)  
-    # human_2 wants to reach node 8 (far end of lower path)
-    target_0 = {5}
-    target_1 = {4}
-    target_2 = {8}
+    # Both humans want to reach node 3
+    target = {3}
     
     policies = {
         'human_0': HeuristicRoutingHumanPolicy(
-            'human_0', G, target_nodes=target_0, p_wait=0.2, seed=1
+            'human_0', G, target_nodes=target, p_wait=0.9, seed=1  # Very high p_wait
         ),
         'human_1': HeuristicRoutingHumanPolicy(
-            'human_1', G, target_nodes=target_1, p_wait=0.3, seed=2
+            'human_1', G, target_nodes=target, p_wait=0.9, seed=2  # Very high p_wait
         ),
-        'human_2': HeuristicRoutingHumanPolicy(
-            'human_2', G, target_nodes=target_2, p_wait=0.2, seed=3
-        ),
-        'vehicle_0': ShortestPathVehiclePolicy('vehicle_0', G, seed=5),
-        'vehicle_1': ShortestPathVehiclePolicy('vehicle_1', G, seed=6)
+        'vehicle_0': SimpleVehiclePolicy('vehicle_0', destination=3, wait_cycles=2)  # Wait 2 cycles
     }
     
-    print(f"   - human_0: HeuristicRoutingHumanPolicy (target={target_0}, p_wait=0.2)")
-    print(f"   - human_1: HeuristicRoutingHumanPolicy (target={target_1}, p_wait=0.3)")
-    print(f"   - human_2: HeuristicRoutingHumanPolicy (target={target_2}, p_wait=0.2)")
-    print("   - vehicle_0: ShortestPathVehiclePolicy")
-    print("   - vehicle_1: ShortestPathVehiclePolicy")
+    print(f"   - human_0: HeuristicRoutingHumanPolicy (target={target}, p_wait=0.9)")
+    print(f"   - human_1: HeuristicRoutingHumanPolicy (target={target}, p_wait=0.9)")
+    print("   - vehicle_0: SimpleVehiclePolicy (destination=3, wait=2 cycles)")
+    print("   Note: Very high p_wait (0.9) + simple network ensures boarding")
     
     # Enable graphical rendering and start video recording
     print("\n4. Starting video recording...")
@@ -131,7 +138,9 @@ def main():
     
     # Run simulation
     print("\n5. Running simulation...")
+    # Generate fresh observations after manual position setup
     obs = {agent: env._generate_observation_for_agent(agent) for agent in env.agents}
+    print(f"   Initial observation for human_0 my_position: {obs['human_0'].get('my_position')}")
     
     boarding_events = []
     unboarding_events = []
@@ -139,6 +148,18 @@ def main():
     
     for cycle in range(50):  # More cycles to see movement
         current_step = env.step_type
+        
+        # Debug output for first few cycles
+        if cycle < 5:
+            print(f"\n   === Cycle {cycle}: {current_step} ===")
+            print(f"      Vehicle destinations before actions: {env.vehicle_destinations}")
+            if current_step == 'boarding' and cycle == 2:
+                # Check what humans see - print FULL observation for debugging
+                print(f"      human_0 FULL observation keys: {obs.get('human_0', {}).keys()}")
+                print(f"      human_0 observation vehicle_destinations: {obs.get('human_0', {}).get('vehicle_destinations')}")
+                print(f"      human_0 observation action_mapping: {obs.get('human_0', {}).get('action_mapping')}")
+                print(f"      human_0 observation my_position: {obs.get('human_0', {}).get('my_position')}")
+                print(f"      human_0 observation agent_attributes: {obs.get('human_0', {}).get('agent_attributes')}")
         
         # Print vehicle destinations at routing step
         if current_step == 'routing' and cycle % 10 == 0:
@@ -162,12 +183,25 @@ def main():
                     new_dest = obs[agent].get('action_mapping', {}).get('details', {}).get(action)
                     print(f"      {agent} setting destination to {new_dest}")
                 
-                # Track boarding events
-                if current_step == 'boarding' and agent in env.human_agents and action > 0:
-                    vehicle_id = obs[agent].get('action_mapping', {}).get('details', {}).get(action)
-                    boarding_events.append(f"Cycle {cycle}: {agent} boards {vehicle_id} - {justification}")
-                    print(f"\n   🚌 BOARDING: {agent} boards {vehicle_id}")
-                    print(f"      Reason: {justification}")
+                # Print departing decisions
+                if current_step == 'departing' and action > 0:
+                    if agent in env.vehicle_agents:
+                        edge = obs[agent].get('action_mapping', {}).get('details', {}).get(action)
+                        print(f"      {agent} departing on edge {edge}")
+                    elif agent in env.human_agents:
+                        edge = obs[agent].get('action_mapping', {}).get('details', {}).get(action)
+                        print(f"      {agent} walking on edge {edge}")
+                
+                # Track boarding events - also print when humans consider boarding
+                if current_step == 'boarding' and agent in env.human_agents:
+                    if action > 0:
+                        vehicle_id = obs[agent].get('action_mapping', {}).get('details', {}).get(action)
+                        boarding_events.append(f"Cycle {cycle}: {agent} boards {vehicle_id} - {justification}")
+                        print(f"\n   🚌 BOARDING: {agent} boards {vehicle_id}")
+                        print(f"      Reason: {justification}")
+                    else:
+                        # Print why not boarding
+                        print(f"      {agent}: NOT boarding - {justification}")
                 
                 # Track unboarding events
                 if current_step == 'unboarding' and agent in env.human_agents and action > 0:
@@ -188,7 +222,7 @@ def main():
         if (cycle + 1) % 10 == 0:
             print(f"\n   Progress: Cycle {cycle + 1}/50 (time: {env.real_time:.2f}s, step: {env.step_type})")
             # Show current positions
-            for agent_id in ['human_0', 'human_1', 'human_2']:
+            for agent_id in ['human_0', 'human_1']:
                 pos = env.agent_positions.get(agent_id)
                 aboard = env.human_aboard.get(agent_id)
                 target = policies[agent_id].target_nodes
