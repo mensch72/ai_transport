@@ -632,7 +632,11 @@ class parallel_env(ParallelEnv):
                 if hasattr(self, '_agent_movement_start_time') and agent in self._agent_movement_start_time:
                     start_time = self._agent_movement_start_time[agent]
                     start_coord = self._agent_movement_start_coord.get(agent, 0.0)
-                    speed = self.agent_attributes.get(agent, {}).get('speed', 1.0)
+                    
+                    # Get edge data for correct speed calculation
+                    edge_data = self.network[edge[0]][edge[1]]
+                    # Use _get_agent_speed to get correct speed (edge speed for vehicles, agent speed for humans)
+                    speed = self._get_agent_speed(agent, edge_data)
                     
                     # Compute how far agent has traveled from start_coord at target_time
                     elapsed = target_time - start_time
@@ -642,7 +646,7 @@ class parallel_env(ParallelEnv):
                     interpolated_coord = start_coord + distance_traveled
                     
                     # Clamp to edge bounds
-                    edge_length = self.network[edge[0]][edge[1]]['length']
+                    edge_length = edge_data['length']
                     interpolated_coord = max(0.0, min(edge_length, interpolated_coord))
                     
                     # Update position to interpolated value
