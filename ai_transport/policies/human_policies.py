@@ -338,15 +338,7 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
         self.p_wait = p_wait
         self.nodes = list(network.nodes())
         
-        # Pre-compute node coordinates for distance calculations (if available)
-        self.node_coords = {}
-        for node in self.nodes:
-            self.node_coords[node] = (
-                network.nodes[node].get('x', 0.0),
-                network.nodes[node].get('y', 0.0)
-            )
-        
-        # Create duration graph for computing shortest duration paths
+        # Create duration graph for computing shortest duration paths (for vehicles)
         # Duration = length / speed
         self.duration_graph = nx.DiGraph()
         for u, v, data in network.edges(data=True):
@@ -354,6 +346,21 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
             speed = data.get('speed', 1.0)
             duration = length / speed if speed > 0 else float('inf')
             self.duration_graph.add_edge(u, v, weight=duration)
+    
+    def _normalize_node_id(self, node):
+        """
+        Normalize a node ID to ensure it's hashable and compatible with NetworkX.
+        Converts numpy types to Python types.
+        
+        Args:
+            node: Node ID (may be numpy type or Python type)
+            
+        Returns:
+            Normalized node ID
+        """
+        if hasattr(node, 'item'):  # numpy scalar
+            return node.item()
+        return node
     
     def _compute_shortest_duration_path(self, source: int, target: int) -> Optional[List[int]]:
         """
@@ -402,6 +409,8 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
         """
         Compute shortest walking time from node to any target node.
         
+        Uses actual road network with walking speed (not vehicle speeds).
+        
         Args:
             node: Node ID
             walking_speed: Human's walking speed
@@ -409,37 +418,36 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
         Returns:
             Minimum walking time to reach any target node
         """
-        # Ensure node is the right type (convert from numpy types if needed)
-        if hasattr(node, 'item'):  # numpy scalar
-            node = node.item()
+        # Normalize node ID
+        node = self._normalize_node_id(node)
         
         if node in self.target_nodes:
             return 0.0
         
+        if walking_speed <= 0:
+            return float('inf')
+        
         min_time = float('inf')
         
         for target in self.target_nodes:
-            # Ensure target is the right type
-            if hasattr(target, 'item'):
-                target = target.item()
+            # Normalize target ID
+            target = self._normalize_node_id(target)
             
-            path = self._compute_shortest_duration_path(node, target)
-            if path:
+            # Compute shortest path based on edge lengths (not vehicle travel times)
+            try:
+                path = nx.shortest_path(self.network, node, target, weight='length')
                 # Compute walking time: sum of (edge_length / walking_speed)
                 walking_time = 0.0
                 for i in range(len(path) - 1):
-                    u, v = path[i], path[i + 1]
-                    # Ensure nodes are the right type
-                    if hasattr(u, 'item'):
-                        u = u.item()
-                    if hasattr(v, 'item'):
-                        v = v.item()
+                    u, v = self._normalize_node_id(path[i]), self._normalize_node_id(path[i + 1])
                     
                     if self.network.has_edge(u, v):
                         edge_length = self.network[u][v].get('length', 1.0)
-                        walking_time += edge_length / walking_speed if walking_speed > 0 else float('inf')
+                        walking_time += edge_length / walking_speed
                 
                 min_time = min(min_time, walking_time)
+            except nx.NetworkXNoPath:
+                continue
         
         return min_time
     

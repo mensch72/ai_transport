@@ -139,8 +139,16 @@ def test_boarding_decision():
             actions = {}
             for agent in env.agents:
                 if agent == 'vehicle_0':
-                    # Set destination to node 3 (which is in target set)
-                    actions[agent] = 4  # Assuming node 3 is at index 3 (action = index + 1)
+                    # Find the action index for setting destination to node 3
+                    action_mapping = obs[agent].get('action_mapping', {})
+                    details = action_mapping.get('details', {})
+                    # Find action that sets destination to node 3
+                    dest_action = 0
+                    for action_idx, dest in details.items():
+                        if dest == 3:
+                            dest_action = action_idx
+                            break
+                    actions[agent] = dest_action
                 else:
                     actions[agent] = 0
             obs, _, _, _, _ = env.step(actions)
