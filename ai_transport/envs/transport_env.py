@@ -651,6 +651,12 @@ class parallel_env(ParallelEnv):
                     
                     # Update position to interpolated value
                     self.agent_positions[agent] = (edge, interpolated_coord)
+        
+        # Update humans aboard vehicles to match their vehicle's interpolated position
+        for human in self.human_agents:
+            aboard = self.human_aboard.get(human)
+            if aboard is not None:
+                self.agent_positions[human] = self.agent_positions[aboard]
     
     def _render_graphical(self, goal_info=None, value_dict=None, title=None):
         """
