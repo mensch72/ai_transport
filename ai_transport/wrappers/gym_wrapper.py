@@ -161,7 +161,12 @@ class TransportGymWrapper(gym.Env):
                 else:
                     # Pick a random node as goal
                     nodes = list(self.env.network.nodes())
-                    initial_goal = {self.np_random.choice(nodes)} if nodes else {0}
+                    if nodes:
+                        # Use numpy random directly since np_random might not be initialized yet
+                        rng = np.random.RandomState()
+                        initial_goal = {rng.choice(nodes)}
+                    else:
+                        initial_goal = {0}
                 
                 self.human_current_goals[agent] = list(initial_goal)[0]
                 
@@ -171,7 +176,9 @@ class TransportGymWrapper(gym.Env):
                 policy_kwargs['target_nodes'] = initial_goal
                 
                 if 'seed' not in policy_kwargs:
-                    policy_kwargs['seed'] = self.np_random.integers(0, 2**31-1)
+                    # Generate a seed for the policy
+                    rng = np.random.RandomState()
+                    policy_kwargs['seed'] = rng.randint(0, 2**31-1)
                 
                 self.human_policies[agent] = self.human_policy_class(**policy_kwargs)
     
@@ -194,10 +201,11 @@ class TransportGymWrapper(gym.Env):
                 if nodes:
                     # Pick a different random node
                     available_nodes = [n for n in nodes if n != pos]
+                    rng = np.random.RandomState()
                     if available_nodes:
-                        new_goal = self.np_random.choice(available_nodes)
+                        new_goal = rng.choice(available_nodes)
                     else:
-                        new_goal = self.np_random.choice(nodes)
+                        new_goal = rng.choice(nodes)
                     
                     self.human_current_goals[agent] = new_goal
                     
