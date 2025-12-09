@@ -6,7 +6,8 @@ Provides abstract base class and concrete implementations for human decision-mak
 
 from abc import ABC, abstractmethod
 import numpy as np
-from typing import Dict, Any, Optional
+import networkx as nx
+from typing import Dict, Any, Optional, Set, Tuple, List
 
 
 class HumanPolicy(ABC):
@@ -297,3 +298,343 @@ class TargetDestinationHumanPolicy(HumanPolicy):
         """Reset policy state (target destination and time)."""
         self.target = None
         self.last_real_time = 0.0
+
+
+class HeuristicRoutingHumanPolicy(HumanPolicy):
+    """
+    Heuristic policy where human uses vehicles to get closer to target nodes.
+    
+    The human:
+    - Has a set of target nodes they want to reach (can be a single node or multiple)
+    - At current node x, considers all vehicles v at x with announced destinations d_v
+    - Computes shortest duration path (considering road length and speed) from x to d_v
+    - Considers all nodes z on any of these paths
+    - Finds z closest to target (in terms of walking time from z to target)
+    - If z is closer to target than x, boards vehicle that reaches z fastest
+    - If z is not closer, either waits (with probability p_wait) or walks toward target
+    """
+    
+    def __init__(
+        self,
+        agent_id: str,
+        network,
+        target_nodes: Set[int],
+        p_wait: float = 0.5,
+        seed: Optional[int] = None
+    ):
+        """
+        Initialize heuristic routing human policy.
+        
+        Args:
+            agent_id: The ID of the agent this policy controls
+            network: NetworkX graph with edge 'length' and 'speed' attributes
+            target_nodes: Set of target node IDs the human wants to reach
+            p_wait: Probability of waiting at node when no good vehicle available (0.0 to 1.0)
+            seed: Random seed for reproducibility
+        """
+        super().__init__(agent_id, seed)
+        self.network = network
+        self.target_nodes = target_nodes
+        self.p_wait = p_wait
+        self.nodes = list(network.nodes())
+        
+        # Pre-compute node coordinates for distance calculations (if available)
+        self.node_coords = {}
+        for node in self.nodes:
+            self.node_coords[node] = (
+                network.nodes[node].get('x', 0.0),
+                network.nodes[node].get('y', 0.0)
+            )
+        
+        # Create duration graph for computing shortest duration paths
+        # Duration = length / speed
+        self.duration_graph = nx.DiGraph()
+        for u, v, data in network.edges(data=True):
+            length = data.get('length', 1.0)
+            speed = data.get('speed', 1.0)
+            duration = length / speed if speed > 0 else float('inf')
+            self.duration_graph.add_edge(u, v, weight=duration)
+    
+    def _compute_shortest_duration_path(self, source: int, target: int) -> Optional[List[int]]:
+        """
+        Compute shortest duration path from source to target.
+        
+        Args:
+            source: Source node ID
+            target: Target node ID
+            
+        Returns:
+            List of nodes in path, or None if no path exists
+        """
+        if source == target:
+            return [source]
+        
+        try:
+            path = nx.shortest_path(self.duration_graph, source, target, weight='weight')
+            return path
+        except nx.NetworkXNoPath:
+            return None
+    
+    def _compute_path_duration(self, path: List[int]) -> float:
+        """
+        Compute total duration of a path.
+        
+        Args:
+            path: List of nodes in path
+            
+        Returns:
+            Total duration in time units
+        """
+        if not path or len(path) < 2:
+            return 0.0
+        
+        total_duration = 0.0
+        for i in range(len(path) - 1):
+            u, v = path[i], path[i + 1]
+            if self.duration_graph.has_edge(u, v):
+                total_duration += self.duration_graph[u][v]['weight']
+            else:
+                return float('inf')
+        
+        return total_duration
+    
+    def _compute_walking_distance_to_target(self, node, walking_speed: float) -> float:
+        """
+        Compute shortest walking time from node to any target node.
+        
+        Args:
+            node: Node ID
+            walking_speed: Human's walking speed
+            
+        Returns:
+            Minimum walking time to reach any target node
+        """
+        # Ensure node is the right type (convert from numpy types if needed)
+        if hasattr(node, 'item'):  # numpy scalar
+            node = node.item()
+        
+        if node in self.target_nodes:
+            return 0.0
+        
+        min_time = float('inf')
+        
+        for target in self.target_nodes:
+            # Ensure target is the right type
+            if hasattr(target, 'item'):
+                target = target.item()
+            
+            path = self._compute_shortest_duration_path(node, target)
+            if path:
+                # Compute walking time: sum of (edge_length / walking_speed)
+                walking_time = 0.0
+                for i in range(len(path) - 1):
+                    u, v = path[i], path[i + 1]
+                    # Ensure nodes are the right type
+                    if hasattr(u, 'item'):
+                        u = u.item()
+                    if hasattr(v, 'item'):
+                        v = v.item()
+                    
+                    if self.network.has_edge(u, v):
+                        edge_length = self.network[u][v].get('length', 1.0)
+                        walking_time += edge_length / walking_speed if walking_speed > 0 else float('inf')
+                
+                min_time = min(min_time, walking_time)
+        
+        return min_time
+    
+    def _get_nodes_on_path(self, path: Optional[List[int]]) -> Set[int]:
+        """
+        Get all nodes on a path.
+        
+        Args:
+            path: List of nodes in path, or None
+            
+        Returns:
+            Set of node IDs on the path
+        """
+        if path is None:
+            return set()
+        return set(path)
+    
+    def get_action(self, observation: Dict[str, Any], action_space_size: int):
+        """
+        Get action based on heuristic routing strategy.
+        
+        For boarding: board vehicle that gets human closest to target fastest
+        For departing: walk toward target if no good vehicle, or wait
+        Otherwise: pass
+        
+        Args:
+            observation: Current observation containing step_type, agent_positions, etc.
+            action_space_size: Size of the action space
+            
+        Returns:
+            Tuple of (action_index, justification_string)
+        """
+        step_type = observation.get('step_type', 'departing')
+        
+        if step_type == 'boarding':
+            return self._get_boarding_action(observation, action_space_size)
+        elif step_type == 'departing':
+            return self._get_departing_action(observation, action_space_size)
+        else:
+            # Routing, unboarding, or on edge - pass
+            if step_type == 'routing':
+                return 0, "Passing (no action in routing step)"
+            elif step_type == 'unboarding':
+                return 0, "Passing (not aboard vehicle)"
+            else:
+                return 0, "Passing"
+    
+    def _get_boarding_action(self, observation: Dict, action_space_size: int) -> Tuple[int, str]:
+        """
+        Decide which vehicle to board (if any) based on heuristic.
+        
+        The human:
+        1. Finds all vehicles at current node with announced destinations
+        2. Computes shortest duration paths from current node to vehicle destinations
+        3. Collects all nodes Z on any of these paths
+        4. Finds Z closest to target (in walking time)
+        5. If Z is closer than current position, boards vehicle that reaches Z fastest
+        6. Otherwise passes
+        """
+        if action_space_size <= 1:
+            return 0, "Passing (no vehicles available)"
+        
+        # Get current position (must be a node for boarding step)
+        my_position = observation.get('my_position')
+        if isinstance(my_position, tuple):
+            return 0, "Passing (not at node)"
+        
+        current_node = my_position
+        
+        # Get agent attributes to find walking speed
+        agent_attributes = observation.get('agent_attributes', {})
+        my_attributes = agent_attributes.get(self.agent_id, {})
+        walking_speed = my_attributes.get('speed', 1.0)
+        
+        # Get vehicle destinations
+        vehicle_destinations = observation.get('vehicle_destinations', {})
+        action_mapping = observation.get('action_mapping', {})
+        details = action_mapping.get('details', {})
+        
+        # Compute walking distance from current node to target
+        current_to_target_time = self._compute_walking_distance_to_target(current_node, walking_speed)
+        
+        # Find all vehicles at current node and collect nodes on their paths
+        vehicle_info = []  # List of (vehicle_id, destination, path, nodes_on_path)
+        all_candidate_nodes = set()
+        
+        for action_idx in range(1, action_space_size):
+            vehicle_id = details.get(action_idx)
+            if vehicle_id:
+                destination = vehicle_destinations.get(vehicle_id)
+                if destination is not None:
+                    # Compute shortest duration path for this vehicle
+                    path = self._compute_shortest_duration_path(current_node, destination)
+                    if path:
+                        nodes_on_path = self._get_nodes_on_path(path)
+                        vehicle_info.append((vehicle_id, destination, path, nodes_on_path, action_idx))
+                        all_candidate_nodes.update(nodes_on_path)
+        
+        if not all_candidate_nodes:
+            return 0, "Passing (no vehicles with destinations)"
+        
+        # Find node Z in all_candidate_nodes that is closest to target (in walking time)
+        best_z = None
+        best_z_to_target_time = float('inf')
+        
+        for z in all_candidate_nodes:
+            z_to_target_time = self._compute_walking_distance_to_target(z, walking_speed)
+            if z_to_target_time < best_z_to_target_time:
+                best_z_to_target_time = z_to_target_time
+                best_z = z
+        
+        # Check if best_z is closer to target than current node
+        if best_z is None or best_z_to_target_time >= current_to_target_time:
+            return 0, f"Passing (no node on vehicle paths closer to target than current position)"
+        
+        # Find vehicle that reaches best_z fastest
+        best_vehicle_id = None
+        best_vehicle_action = None
+        best_time_to_z = float('inf')
+        
+        for vehicle_id, destination, path, nodes_on_path, action_idx in vehicle_info:
+            if best_z in nodes_on_path:
+                # Find time for vehicle to reach best_z
+                # Get partial path from current_node to best_z
+                try:
+                    z_index = path.index(best_z)
+                    partial_path = path[:z_index + 1]
+                    time_to_z = self._compute_path_duration(partial_path)
+                    
+                    if time_to_z < best_time_to_z:
+                        best_time_to_z = time_to_z
+                        best_vehicle_id = vehicle_id
+                        best_vehicle_action = action_idx
+                except (ValueError, IndexError):
+                    continue
+        
+        if best_vehicle_action is not None:
+            return best_vehicle_action, f"Boarding {best_vehicle_id} to reach node {best_z} (closer to target, ETA {best_time_to_z:.1f})"
+        
+        return 0, "Passing (no suitable vehicle found)"
+    
+    def _get_departing_action(self, observation: Dict, action_space_size: int) -> Tuple[int, str]:
+        """
+        Decide whether to walk toward target or wait for vehicles.
+        
+        If no good vehicles were available at boarding step, the human either:
+        - Waits at current node (with probability p_wait)
+        - Walks toward target on shortest walking path (with probability 1 - p_wait)
+        """
+        my_position = observation.get('my_position')
+        if isinstance(my_position, tuple):
+            return 0, "Passing (already on edge)"
+        
+        current_node = my_position
+        
+        # Check if already at target
+        if current_node in self.target_nodes:
+            return 0, f"Passing (already at target node {current_node})"
+        
+        if action_space_size <= 1:
+            return 0, "Passing (no edges available)"
+        
+        # Decide whether to wait or walk
+        if self.rng.random() < self.p_wait:
+            return 0, f"Waiting at node {current_node} for vehicles (p_wait={self.p_wait})"
+        
+        # Walk toward target - find next node on shortest path to any target
+        action_mapping = observation.get('action_mapping', {})
+        details = action_mapping.get('details', {})
+        
+        # Get agent attributes to find walking speed
+        agent_attributes = observation.get('agent_attributes', {})
+        my_attributes = agent_attributes.get(self.agent_id, {})
+        walking_speed = my_attributes.get('speed', 1.0)
+        
+        # Find best next node (closest to any target in walking time)
+        best_action = 0
+        best_edge = None
+        best_walking_time = float('inf')
+        
+        for action_idx in range(1, action_space_size):
+            edge = details.get(action_idx)
+            if edge and isinstance(edge, tuple):
+                next_node = edge[1]
+                walking_time = self._compute_walking_distance_to_target(next_node, walking_speed)
+                if walking_time < best_walking_time:
+                    best_walking_time = walking_time
+                    best_action = action_idx
+                    best_edge = edge
+        
+        if best_action > 0:
+            return best_action, f"Walking toward target via edge {best_edge} (walking time to target: {best_walking_time:.1f})"
+        
+        return 0, "Passing (no edge toward target)"
+    
+    def reset(self):
+        """Reset policy state (no state to reset for this policy)."""
+        pass
