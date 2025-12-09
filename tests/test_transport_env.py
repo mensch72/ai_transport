@@ -936,19 +936,31 @@ def test_save_frame():
 def test_video_recording():
     """Test video recording functionality"""
     test_env = parallel_env(num_humans=1, num_vehicles=1, render_mode="human")
-    test_env.reset()
+    test_env.reset(seed=42)
     
     # Start recording
     test_env.start_video_recording()
     
-    # Render a few frames
-    for _ in range(3):
-        test_env.render()
-        test_env.step_type = 'routing'
-        actions = {agent: 0 for agent in test_env.agents}
-        test_env.step(actions)
+    # Take steps to get to departing and make agents move
+    # routing step
+    actions = {agent: 0 for agent in test_env.agents}
+    test_env.step(actions)
     
-    # Check frames were recorded
+    # unboarding step
+    actions = {agent: 0 for agent in test_env.agents}
+    test_env.step(actions)
+    
+    # boarding step
+    actions = {agent: 0 for agent in test_env.agents}
+    test_env.step(actions)
+    
+    # departing step - make agents depart onto edges (action 1 = first outgoing edge)
+    # This will cause time to advance
+    actions = {agent: 1 for agent in test_env.agents}
+    test_env.step(actions)
+    test_env.render()
+    
+    # Check frames were recorded (time advanced, so frames should be captured)
     assert len(test_env.frames) > 0
     
     test_env.close()
