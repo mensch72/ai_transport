@@ -225,7 +225,12 @@ class TransportGymWrapper(gym.Env):
             else:
                 # Use policy to get action
                 obs = obs_dict[agent]
-                human_actions[agent] = policy.get_action(obs, self.env)
+                # Get action space size for this agent
+                action_space = self.env.action_space(agent)
+                action_space_size = action_space.n
+                # get_action returns (action_index, justification_string)
+                action, _ = policy.get_action(obs, action_space_size)
+                human_actions[agent] = action
         
         return human_actions
     
