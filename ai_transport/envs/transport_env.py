@@ -1114,9 +1114,9 @@ class parallel_env(ParallelEnv):
             fps: Frames per second
             
         Note:
-            MP4 encoding uses H.264 codec (libx264) with quality=8 (0-10 scale,
-            where 0 is best) and yuv420p pixel format for maximum compatibility
-            with video players and web browsers.
+            MP4 encoding uses H.264 codec (libx264) with quality=8 (1-10 scale,
+            where 1 is best quality and 10 is lowest quality) and yuv420p pixel 
+            format for maximum compatibility with video players and web browsers.
         """
         if not self.frames:
             print("No frames recorded. Call start_video_recording() first.")
@@ -1136,7 +1136,7 @@ class parallel_env(ParallelEnv):
                     self.frames, 
                     fps=fps, 
                     codec='libx264',
-                    quality=8,  # 0-10 scale, 8 is good balance of quality/size
+                    quality=8,  # 1-10 scale: 1=best quality, 10=lowest quality
                     pixelformat='yuv420p'  # Most compatible pixel format
                 )
                 print(f"✓ Video saved to {filename} ({len(self.frames)} frames)")
