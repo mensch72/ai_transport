@@ -51,10 +51,11 @@ def main():
     env.render()
     
     # Demonstrate different step types
+    # The environment automatically cycles through: routing -> unboarding -> boarding -> departing
+    
     print("\n" + "=" * 70)
     print("Step Type: ROUTING")
     print("=" * 70)
-    env.step_type = 'routing'
     print("\nAction spaces in routing step:")
     for agent in env.agents:
         space = env.action_space(agent)
@@ -64,11 +65,20 @@ def main():
         else:
             print("can only pass)")
     
+    # Pass through to next step type (unboarding)
+    actions = {agent: 0 for agent in env.agents}  # All pass
+    env.step(actions)
+    
+    # Pass through to next step type (boarding)
+    actions = {agent: 0 for agent in env.agents}  # All pass
+    env.step(actions)
+    
     print("\n" + "=" * 70)
     print("Step Type: BOARDING")
     print("=" * 70)
-    env.step_type = 'boarding'
     # Make sure humans are at a node and not aboard
+    # We need to manually adjust positions for this demo
+    # In a real scenario, these would be set by previous actions
     env.agent_positions['human_0'] = 0
     env.agent_positions['human_1'] = 0
     env.agent_positions['vehicle_0'] = 0
@@ -87,11 +97,22 @@ def main():
         else:
             print("can only pass)")
     
+    # Pass through to next step type (departing)
+    actions = {agent: 0 for agent in env.agents}  # All pass
+    env.step(actions)
+    
+    # Pass through to next step type (routing)
+    actions = {agent: 0 for agent in env.agents}  # All pass
+    env.step(actions)
+    
+    # Pass through to next step type (unboarding)
+    actions = {agent: 0 for agent in env.agents}  # All pass
+    env.step(actions)
+    
     print("\n" + "=" * 70)
     print("Step Type: UNBOARDING")
     print("=" * 70)
-    env.step_type = 'unboarding'
-    # Put one human aboard the vehicle
+    # Put one human aboard the vehicle for demo
     env.human_aboard['human_0'] = 'vehicle_0'
     
     print("\nAction spaces in unboarding step:")
@@ -107,11 +128,14 @@ def main():
         else:
             print("can only pass)")
     
+    # Pass through to next step type (boarding)
+    actions = {agent: 0 for agent in env.agents}  # All pass
+    env.step(actions)
+    
     print("\n" + "=" * 70)
     print("Step Type: DEPARTING")
     print("=" * 70)
-    env.step_type = 'departing'
-    # Reset positions to node 0
+    # Reset positions to node 0 for demo
     env.agent_positions['human_0'] = 0
     env.agent_positions['human_1'] = 0
     env.agent_positions['vehicle_0'] = 0

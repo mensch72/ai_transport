@@ -141,7 +141,7 @@ def main():
     print("Testing Environment Functionality")
     print("=" * 70)
     
-    env3.step_type = 'routing'
+    # Environment starts in 'routing' step after reset
     actions = {agent: 0 for agent in env3.agents}
     obs, rewards, terms, truncs, infos = env3.step(actions)
     

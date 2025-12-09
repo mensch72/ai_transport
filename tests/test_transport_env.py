@@ -245,7 +245,7 @@ def test_action_space_routing():
     
     # Manually place vehicle at node so it can route
     test_env.agent_positions['vehicle_0'] = 0
-    test_env.step_type = 'routing'
+    test_env._set_step_type_for_testing('routing')
     
     # Vehicles at nodes should have actions for each node + None
     num_nodes = len(test_env.network.nodes())
@@ -261,7 +261,7 @@ def test_action_space_unboarding():
     """Test action spaces during unboarding step type"""
     test_env = parallel_env(num_humans=2, num_vehicles=1)
     test_env.reset()
-    test_env.step_type = 'unboarding'
+    test_env._set_step_type_for_testing('unboarding')
     
     # Human not aboard should only have pass
     test_env.human_aboard['human_0'] = None
@@ -283,7 +283,7 @@ def test_action_space_boarding():
     """Test action spaces during boarding step type"""
     test_env = parallel_env(num_humans=2, num_vehicles=2)
     test_env.reset()
-    test_env.step_type = 'boarding'
+    test_env._set_step_type_for_testing('boarding')
     
     # Place all agents at node 0
     test_env.agent_positions['human_0'] = 0
@@ -306,7 +306,7 @@ def test_action_space_departing():
     """Test action spaces during departing step type"""
     test_env = parallel_env(num_humans=2, num_vehicles=1)
     test_env.reset()
-    test_env.step_type = 'departing'
+    test_env._set_step_type_for_testing('departing')
     
     # Place agents at node 0
     test_env.agent_positions['human_0'] = 0
@@ -345,7 +345,7 @@ def test_action_space_agents_on_edges():
         test_env.human_aboard['human_0'] = None
         
         for step_type in ['routing', 'unboarding', 'boarding', 'departing']:
-            test_env.step_type = step_type
+            test_env._set_step_type_for_testing(step_type)
             
             # Both should only have pass action when on edge
             human_space = test_env.action_space('human_0')
@@ -363,7 +363,7 @@ def test_routing_step_logic():
     
     # Manually place all agents at nodes so routing actions work
     test_env.agent_positions = {'human_0': 0, 'vehicle_0': 0, 'vehicle_1': 1}
-    test_env.step_type = 'routing'
+    test_env._set_step_type_for_testing('routing')
     
     initial_time = test_env.real_time
     nodes = list(test_env.network.nodes())
@@ -393,7 +393,7 @@ def test_unboarding_step_logic():
     
     # Manually place all agents at nodes
     test_env.agent_positions = {'human_0': 0, 'human_1': 0, 'vehicle_0': 0}
-    test_env.step_type = 'unboarding'
+    test_env._set_step_type_for_testing('unboarding')
     
     # Put humans aboard vehicle
     test_env.human_aboard['human_0'] = 'vehicle_0'
@@ -422,7 +422,7 @@ def test_boarding_step_logic():
     """Test boarding step with capacity constraints"""
     test_env = parallel_env(num_humans=3, num_vehicles=1)
     test_env.reset(seed=42)
-    test_env.step_type = 'boarding'
+    test_env._set_step_type_for_testing('boarding')
     
     # Set vehicle capacity to 2
     test_env.agent_attributes['vehicle_0']['capacity'] = 2
@@ -461,7 +461,7 @@ def test_departing_step_logic_basic():
     """Test departing step moves agents onto edges"""
     test_env = parallel_env(num_humans=1, num_vehicles=1)
     test_env.reset()
-    test_env.step_type = 'departing'
+    test_env._set_step_type_for_testing('departing')
     
     # Both at node 0
     test_env.agent_positions['human_0'] = 0
@@ -500,7 +500,7 @@ def test_departing_step_time_advance():
     """Test that departing step advances time correctly"""
     test_env = parallel_env(num_humans=1, num_vehicles=1)
     test_env.reset()
-    test_env.step_type = 'departing'
+    test_env._set_step_type_for_testing('departing')
     
     # Place agents on an edge
     edges = list(test_env.network.edges())
@@ -538,7 +538,7 @@ def test_departing_step_arrival_at_node():
     """Test that agents arrive at nodes when reaching edge end"""
     test_env = parallel_env(num_humans=1, num_vehicles=1)
     test_env.reset()
-    test_env.step_type = 'departing'
+    test_env._set_step_type_for_testing('departing')
     
     # Place agents very close to end of edge
     edges = list(test_env.network.edges())
@@ -579,7 +579,7 @@ def test_humans_aboard_move_with_vehicle():
     """Test that humans aboard vehicles move with the vehicle"""
     test_env = parallel_env(num_humans=1, num_vehicles=1)
     test_env.reset()
-    test_env.step_type = 'departing'
+    test_env._set_step_type_for_testing('departing')
     
     # Place human aboard vehicle at node
     test_env.agent_positions['human_0'] = 0
@@ -726,7 +726,7 @@ def test_rewards_always_zero():
     """Test that rewards are always zero"""
     test_env = parallel_env(num_humans=2, num_vehicles=1)
     test_env.reset()
-    test_env.step_type = 'routing'
+    test_env._set_step_type_for_testing('routing')
     
     actions = {agent: 0 for agent in test_env.agents}
     obs, rewards, terms, truncs, infos = test_env.step(actions)
@@ -746,7 +746,7 @@ def test_observations_in_step():
     """Test that observations are generated correctly in step"""
     test_env = parallel_env(num_humans=1, num_vehicles=1, observation_scenario='full')
     test_env.reset()
-    test_env.step_type = 'routing'
+    test_env._set_step_type_for_testing('routing')
     
     actions = {agent: 0 for agent in test_env.agents}
     obs, rewards, terms, truncs, infos = test_env.step(actions)
@@ -888,7 +888,7 @@ def test_random_network_integration():
     test_env2.initialize_random_positions(seed=42)
     
     # Check environment works with random positions
-    test_env2.step_type = 'routing'
+    test_env2._set_step_type_for_testing('routing')
     actions = {agent: 0 for agent in test_env2.agents}
     obs, rewards, terms, truncs, infos = test_env2.step(actions)
     
@@ -936,19 +936,31 @@ def test_save_frame():
 def test_video_recording():
     """Test video recording functionality"""
     test_env = parallel_env(num_humans=1, num_vehicles=1, render_mode="human")
-    test_env.reset()
+    test_env.reset(seed=42)
     
     # Start recording
     test_env.start_video_recording()
     
-    # Render a few frames
-    for _ in range(3):
-        test_env.render()
-        test_env.step_type = 'routing'
-        actions = {agent: 0 for agent in test_env.agents}
-        test_env.step(actions)
+    # Take steps to get to departing and make agents move
+    # routing step
+    actions = {agent: 0 for agent in test_env.agents}
+    test_env.step(actions)
     
-    # Check frames were recorded
+    # unboarding step
+    actions = {agent: 0 for agent in test_env.agents}
+    test_env.step(actions)
+    
+    # boarding step
+    actions = {agent: 0 for agent in test_env.agents}
+    test_env.step(actions)
+    
+    # departing step - make agents depart onto edges (action 1 = first outgoing edge)
+    # This will cause time to advance
+    actions = {agent: 1 for agent in test_env.agents}
+    test_env.step(actions)
+    test_env.render()
+    
+    # Check frames were recorded (time advanced, so frames should be captured)
     assert len(test_env.frames) > 0
     
     test_env.close()

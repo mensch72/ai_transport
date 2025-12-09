@@ -85,8 +85,13 @@ obs, _ = env3.reset(seed=100)
 agents_on_edges = [a for a, pos in env3.agent_positions.items() if isinstance(pos, tuple)]
 print(f"   Agents initially on edges: {agents_on_edges}")
 
-# Move to departing step
-env3.step_type = 'departing'
+# Move to departing step by cycling through step types
+# Environment starts at 'routing' after reset
+# Cycle: routing -> unboarding -> boarding -> departing
+for _ in range(3):  # Pass through routing, unboarding, boarding
+    actions = {agent: 0 for agent in env3.agents}
+    env3.step(actions)
+
 initial_time = env3.real_time
 print(f"   Initial real_time: {initial_time}")
 print(f"   Initial step_type: {env3.step_type}")
@@ -121,7 +126,12 @@ env4 = parallel_env(num_humans=2, num_vehicles=1)
 obs, _ = env4.reset(seed=1)
 # Manually place all at nodes
 env4.agent_positions = {agent: 0 for agent in env4.agents}
-env4.step_type = 'departing'
+
+# Move to departing step by cycling through step types
+for _ in range(3):  # Pass through routing, unboarding, boarding
+    actions = {agent: 0 for agent in env4.agents}
+    env4.step(actions)
+
 initial_time = env4.real_time
 
 actions = {agent: 0 for agent in env4.agents}
