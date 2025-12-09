@@ -2,10 +2,10 @@
 Demonstration of HeuristicRoutingHumanPolicy with video recording.
 
 This example shows:
-1. Humans using heuristic policy to board vehicles strategically
-2. Hand-crafted initial situation ensuring humans board vehicles
-3. Graphical rendering with video recording
-4. Humans reaching their target destinations intelligently
+1. Humans using heuristic policy with intelligent unboarding
+2. Complex scenario with multiple vehicles going different directions
+3. Humans boarding, unboarding when vehicle goes wrong way, and walking
+4. Graphical rendering with video recording
 """
 
 import os
@@ -57,117 +57,122 @@ class SimpleVehiclePolicy:
 
 def main():
     print("=" * 70)
-    print("AI Transport - Heuristic Routing Human Policy with Video Demo")
+    print("AI Transport - Complex Heuristic Routing Demo with Unboarding")
     print("=" * 70)
     
-    # Create a hand-crafted network for clear demonstration
-    print("\n1. Creating custom network...")
+    # Create a branching network for complex scenarios
+    print("\n1. Creating complex network...")
     G = nx.DiGraph()
     
-    # Create a simple linear network: 0 -> 1 -> 2 -> 3
-    # This ensures vehicles going to node 3 pass through nodes 1 and 2
-    G.add_node(0, name="Start", x=0.0, y=0.0)
-    G.add_node(1, name="Mid1", x=10.0, y=0.0)
-    G.add_node(2, name="Mid2", x=20.0, y=0.0)
-    G.add_node(3, name="End", x=30.0, y=0.0)
+    # Network structure - branching paths:
+    #       2---3---4
+    #      /         \
+    #     1           5---6
+    #    /             \
+    #   0               7
+    #    \             /
+    #     8---9------10
     
-    # Add edges
-    G.add_edge(0, 1, length=10.0, speed=3.0, capacity=10)
-    G.add_edge(1, 2, length=10.0, speed=3.0, capacity=10)
-    G.add_edge(2, 3, length=10.0, speed=3.0, capacity=10)
+    positions = {
+        0: (0, 0),
+        1: (5, 5), 2: (10, 8), 3: (15, 8), 4: (20, 8),
+        5: (23, 4), 6: (28, 4), 7: (23, 0),
+        8: (5, -5), 9: (10, -5), 10: (18, -3)
+    }
+    
+    for node_id, (x, y) in positions.items():
+        G.add_node(node_id, name=f"Node_{node_id}", x=x, y=y)
+    
+    # Add edges - create multiple paths
+    edges = [
+        (0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (5, 7),  # Upper path
+        (0, 8), (8, 9), (9, 10), (10, 7),  # Lower path
+        (10, 5)  # Connection
+    ]
+    
+    for u, v in edges:
+        x1, y1 = positions[u]
+        x2, y2 = positions[v]
+        length = ((x2 - x1)**2 + (y2 - y1)**2)**0.5
+        G.add_edge(u, v, length=length, speed=3.0, capacity=10)
     
     # Create environment
     env = parallel_env(
-        num_humans=2,
-        num_vehicles=1,
+        num_humans=3,
+        num_vehicles=2,
         network=G,
-        observation_scenario='full',  # Important: need full observations to see vehicle destinations!
+        observation_scenario='full',  # Important for policy
         render_mode="human"
     )
     
     env.reset(seed=42)
     
-    # Hand-craft initial positions: all agents at node 0
-    print("\n2. Setting up hand-crafted initial scenario...")
-    print("   - All agents start at node 0")
-    print("   - Vehicle will head to node 3")
-    print("   - Humans want to reach node 3")
+    # Hand-craft initial positions for interesting scenario
+    print("\n2. Setting up complex scenario...")
+    print("   SCENARIO:")
+    print("   - human_0 at node 0, target: node 6 (far upper right)")
+    print("   - human_1 at node 0, target: node 7 (middle right)")
+    print("   - human_2 at node 0, target: node 10 (lower right)")
+    print("   - vehicle_0 at node 0, destination: node 4 (upper path - WRONG for most)")
+    print("   - vehicle_1 at node 0, destination: node 10 (lower path - GOOD for human_2)")
     
+    # Position everyone at node 0
     for agent in env.agents:
         env.agent_positions[agent] = 0
         if agent in env.human_agents:
             env.human_aboard[agent] = None
         if agent in env.vehicle_agents:
-            # Pre-set vehicle destination to node 3
-            env.vehicle_destinations[agent] = 3
+            if agent == 'vehicle_0':
+                env.vehicle_destinations[agent] = 4  # Goes upper path
+            else:
+                env.vehicle_destinations[agent] = 10  # Goes lower path
     
     print(f"\n   Network: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
-    print(f"   Agents: 2 humans, 1 vehicle (all starting at node 0)")
-    print(f"   Pre-set destination: vehicle_0 -> node 3")
+    print(f"   Agents: 3 humans, 2 vehicles (all starting at node 0)")
     
     # Create policies
     print("\n3. Creating policies...")
     
-    # Both humans want to reach node 3
-    target = {3}
-    
     policies = {
         'human_0': HeuristicRoutingHumanPolicy(
-            'human_0', G, target_nodes=target, p_wait=0.9, seed=1  # Very high p_wait
+            'human_0', G, target_nodes={6}, p_wait=0.7, seed=1
         ),
         'human_1': HeuristicRoutingHumanPolicy(
-            'human_1', G, target_nodes=target, p_wait=0.9, seed=2  # Very high p_wait
+            'human_1', G, target_nodes={7}, p_wait=0.6, seed=2
         ),
-        'vehicle_0': SimpleVehiclePolicy('vehicle_0', destination=3, wait_cycles=2)  # Wait 2 cycles
+        'human_2': HeuristicRoutingHumanPolicy(
+            'human_2', G, target_nodes={10}, p_wait=0.3, seed=3
+        ),
+        'vehicle_0': SimpleVehiclePolicy('vehicle_0', destination=4, wait_cycles=2),
+        'vehicle_1': SimpleVehiclePolicy('vehicle_1', destination=10, wait_cycles=2)
     }
     
-    print(f"   - human_0: HeuristicRoutingHumanPolicy (target={target}, p_wait=0.9)")
-    print(f"   - human_1: HeuristicRoutingHumanPolicy (target={target}, p_wait=0.9)")
-    print("   - vehicle_0: SimpleVehiclePolicy (destination=3, wait=2 cycles)")
-    print("   Note: Very high p_wait (0.9) + simple network ensures boarding")
+    print(f"   - human_0: target {6} (far upper), p_wait=0.7")
+    print(f"   - human_1: target {7} (middle), p_wait=0.6")
+    print(f"   - human_2: target {10} (lower), p_wait=0.3")
+    print("   - vehicle_0: destination 4 (upper path)")
+    print("   - vehicle_1: destination 10 (lower path)")
     
     # Enable graphical rendering and start video recording
     print("\n4. Starting video recording...")
     env.enable_rendering('graphical')
     env.start_video_recording()
     
-    # Render initial state
     env.render()
-    env.save_frame('heuristic_policy_initial.png')
-    print("   Saved initial frame to heuristic_policy_initial.png")
+    env.save_frame('complex_heuristic_initial.png')
+    print("   Saved initial frame")
     
     # Run simulation
-    print("\n5. Running simulation...")
-    # Generate fresh observations after manual position setup
+    print("\n5. Running complex simulation...")
     obs = {agent: env._generate_observation_for_agent(agent) for agent in env.agents}
-    print(f"   Initial observation for human_0 my_position: {obs['human_0'].get('my_position')}")
     
     boarding_events = []
     unboarding_events = []
+    walking_events = []
     frame_counter = 0
     
-    for cycle in range(50):  # More cycles to see movement
+    for cycle in range(80):  # More cycles for complex scenario
         current_step = env.step_type
-        
-        # Debug output for first few cycles
-        if cycle < 5:
-            print(f"\n   === Cycle {cycle}: {current_step} ===")
-            print(f"      Vehicle destinations before actions: {env.vehicle_destinations}")
-            if current_step == 'boarding' and cycle == 2:
-                # Check what humans see - print FULL observation for debugging
-                print(f"      human_0 FULL observation keys: {obs.get('human_0', {}).keys()}")
-                print(f"      human_0 observation vehicle_destinations: {obs.get('human_0', {}).get('vehicle_destinations')}")
-                print(f"      human_0 observation action_mapping: {obs.get('human_0', {}).get('action_mapping')}")
-                print(f"      human_0 observation my_position: {obs.get('human_0', {}).get('my_position')}")
-                print(f"      human_0 observation agent_attributes: {obs.get('human_0', {}).get('agent_attributes')}")
-        
-        # Print vehicle destinations at routing step
-        if current_step == 'routing' and cycle % 10 == 0:
-            print(f"\n   Routing step (cycle {cycle}):")
-            for vehicle in ['vehicle_0', 'vehicle_1']:
-                dest = env.vehicle_destinations.get(vehicle)
-                pos = env.agent_positions.get(vehicle)
-                print(f"      {vehicle} at {pos}, destination: {dest}")
         
         # Get actions from policies
         actions = {}
@@ -178,101 +183,90 @@ def main():
                 action, justification = policy.get_action(obs[agent], action_space_size)
                 actions[agent] = action
                 
-                # Print vehicle routing decisions
-                if current_step == 'routing' and agent in env.vehicle_agents and action > 0:
-                    new_dest = obs[agent].get('action_mapping', {}).get('details', {}).get(action)
-                    print(f"      {agent} setting destination to {new_dest}")
+                # Track events
+                if current_step == 'boarding' and agent in env.human_agents and action > 0:
+                    vehicle_id = obs[agent].get('action_mapping', {}).get('details', {}).get(action)
+                    boarding_events.append(f"Cycle {cycle}: {agent} boards {vehicle_id}")
+                    print(f"\n   🚌 BOARDING (cycle {cycle}): {agent} boards {vehicle_id}")
+                    print(f"      {justification}")
                 
-                # Print departing decisions
-                if current_step == 'departing' and action > 0:
-                    if agent in env.vehicle_agents:
-                        edge = obs[agent].get('action_mapping', {}).get('details', {}).get(action)
-                        print(f"      {agent} departing on edge {edge}")
-                    elif agent in env.human_agents:
-                        edge = obs[agent].get('action_mapping', {}).get('details', {}).get(action)
-                        print(f"      {agent} walking on edge {edge}")
-                
-                # Track boarding events - also print when humans consider boarding
-                if current_step == 'boarding' and agent in env.human_agents:
-                    if action > 0:
-                        vehicle_id = obs[agent].get('action_mapping', {}).get('details', {}).get(action)
-                        boarding_events.append(f"Cycle {cycle}: {agent} boards {vehicle_id} - {justification}")
-                        print(f"\n   🚌 BOARDING: {agent} boards {vehicle_id}")
-                        print(f"      Reason: {justification}")
-                    else:
-                        # Print why not boarding
-                        print(f"      {agent}: NOT boarding - {justification}")
-                
-                # Track unboarding events
                 if current_step == 'unboarding' and agent in env.human_agents and action > 0:
                     aboard = env.human_aboard.get(agent)
                     unboarding_events.append(f"Cycle {cycle}: {agent} unboards from {aboard}")
-                    print(f"\n   🚶 UNBOARDING: {agent} unboards from {aboard}")
+                    print(f"\n   🚶 UNBOARDING (cycle {cycle}): {agent} unboards from {aboard}")
+                    print(f"      {justification}")
+                
+                if current_step == 'departing' and agent in env.human_agents and action > 0:
+                    if env.human_aboard.get(agent) is None:  # Walking, not riding
+                        edge = obs[agent].get('action_mapping', {}).get('details', {}).get(action)
+                        walking_events.append(f"Cycle {cycle}: {agent} walks")
+                        if len(walking_events) <= 5:  # Only print first few
+                            print(f"\n   🚶 WALKING (cycle {cycle}): {agent}")
+                            print(f"      {justification}")
             else:
                 actions[agent] = 0
         
-        # Take step
+        # Step environment
         obs, rewards, terms, truncs, infos = env.step(actions)
         
-        # Render after departing step (when movement happens)
-        if env.step_type == 'routing':  # Just finished departing
+        # Render after departing step
+        if env.step_type == 'routing':
             env.render()
             frame_counter += 1
-            
-        if (cycle + 1) % 10 == 0:
-            print(f"\n   Progress: Cycle {cycle + 1}/50 (time: {env.real_time:.2f}s, step: {env.step_type})")
-            # Show current positions
-            for agent_id in ['human_0', 'human_1']:
+        
+        # Progress report
+        if (cycle + 1) % 20 == 0:
+            print(f"\n   Progress: Cycle {cycle + 1}/80")
+            for agent_id in ['human_0', 'human_1', 'human_2']:
                 pos = env.agent_positions.get(agent_id)
                 aboard = env.human_aboard.get(agent_id)
                 target = policies[agent_id].target_nodes
                 pos_str = str(pos) if not isinstance(pos, tuple) else f"edge {pos[0]}"
                 aboard_str = f" (aboard {aboard})" if aboard else ""
-                at_target = "✓ AT TARGET" if pos in target else ""
-                print(f"      {agent_id}: at {pos_str}{aboard_str} -> target {target} {at_target}")
+                at_target = "✓ TARGET" if pos in target else ""
+                print(f"      {agent_id}: {pos_str}{aboard_str} -> {target} {at_target}")
     
     # Save video
     print("\n6. Saving video...")
-    env.save_video('heuristic_policy_demo.mp4', fps=5)
+    env.save_video('complex_heuristic_demo.mp4', fps=5)
+    env.save_frame('complex_heuristic_final.png')
+    print("   Saved video and final frame")
     
-    # Save final frame
-    env.save_frame('heuristic_policy_final.png')
-    print("   Saved final frame to heuristic_policy_final.png")
-    
-    # Close environment
     env.close()
     
     print("\n" + "=" * 70)
-    print("Demo complete!")
+    print("Complex Demo Complete!")
     print("=" * 70)
     
-    print("\n📊 Summary:")
-    print(f"   - Total boarding events: {len(boarding_events)}")
-    print(f"   - Total unboarding events: {len(unboarding_events)}")
-    print(f"   - Video frames captured: {frame_counter}")
+    print("\n📊 EVENT SUMMARY:")
+    print(f"   - Boarding events: {len(boarding_events)}")
+    print(f"   - Unboarding events: {len(unboarding_events)}")
+    print(f"   - Walking events: {len(walking_events)}")
     
     if boarding_events:
-        print("\n🚌 Boarding events:")
-        for event in boarding_events[:10]:  # Show first 10
+        print("\n🚌 BOARDING EVENTS:")
+        for event in boarding_events:
             print(f"   {event}")
-        if len(boarding_events) > 10:
-            print(f"   ... and {len(boarding_events) - 10} more")
+    
+    if unboarding_events:
+        print("\n🚶 UNBOARDING EVENTS:")
+        for event in unboarding_events:
+            print(f"   {event}")
     
     print("\n📁 Generated files:")
-    print("   - heuristic_policy_initial.png (initial state)")
-    print("   - heuristic_policy_final.png (final state)")
-    print("   - heuristic_policy_demo.mp4 (full simulation video)")
+    print("   - complex_heuristic_initial.png")
+    print("   - complex_heuristic_final.png")
+    print("   - complex_heuristic_demo.mp4")
     
-    print("\n💡 Policy Behavior Demonstrated:")
-    print("   - Humans start at node 0 with vehicles")
-    print("   - Vehicles set destinations using ShortestPathVehiclePolicy")
-    print("   - Humans evaluate which vehicles go toward their targets")
-    print("   - Humans board vehicles that take them closer to targets")
-    print("   - Humans may unboard at intermediate nodes to switch routes")
-    print("   - Humans walk if no good vehicle options available")
-    
-    print("\n📝 Note: To enable video recording, install imageio with:")
-    print("   pip install imageio[ffmpeg]")
+    print("\n💡 SCENARIO OUTCOMES:")
+    print("   This demo showcases:")
+    print("   1. Intelligent boarding - humans board vehicles going toward their targets")
+    print("   2. Smart unboarding - humans exit when:")
+    print("      a) Vehicle reaches their planned exit node")
+    print("      b) Vehicle goes wrong direction (distance to target increases)")
+    print("      c) Better vehicle becomes available")
+    print("   3. Walking as fallback - humans walk when no good vehicles available")
+    print("   4. Different strategies - each human makes independent decisions")
 
 
 if __name__ == "__main__":

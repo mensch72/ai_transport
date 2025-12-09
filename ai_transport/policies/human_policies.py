@@ -338,6 +338,11 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
         self.p_wait = p_wait
         self.nodes = list(network.nodes())
         
+        # Track previous node for intelligent unboarding
+        self.previous_node = None
+        # Track the planned exit node (the best_z chosen when boarding)
+        self.planned_exit_node = None
+        
         # Create duration graph for computing shortest duration paths (for vehicles)
         # Duration = length / speed
         self.duration_graph = nx.DiGraph()
@@ -512,12 +517,12 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
             return self._get_boarding_action(observation, action_space_size)
         elif step_type == 'departing':
             return self._get_departing_action(observation, action_space_size)
+        elif step_type == 'unboarding':
+            return self._get_unboarding_action(observation, action_space_size)
         else:
-            # Routing, unboarding, or on edge - pass
+            # Routing or on edge - pass
             if step_type == 'routing':
                 return 0, "Passing (no action in routing step)"
-            elif step_type == 'unboarding':
-                return 0, "Passing (not aboard vehicle)"
             else:
                 return 0, "Passing"
     
@@ -622,9 +627,10 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
                         best_vehicle_action = action_idx
                 except (ValueError, IndexError, AttributeError):
                     continue
-                    continue
         
         if best_vehicle_action is not None:
+            # Set the planned exit node when boarding
+            self.planned_exit_node = best_z
             return best_vehicle_action, f"Boarding {best_vehicle_id} to reach node {best_z} (closer to target, ETA {best_time_to_z:.1f})"
         
         return 0, "Passing (no suitable vehicle found)"
@@ -692,6 +698,123 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
         
         return 0, "Passing (no edge toward target)"
     
+    def _get_unboarding_action(self, observation: Dict, action_space_size: int) -> Tuple[int, str]:
+        """
+        Decide whether to unboard from vehicle.
+        
+        Intelligent unboarding happens when:
+        1. Arrived at target node
+        2. Arrived at the planned exit node (the one chosen when boarding)
+        3. Vehicle goes wrong direction (distance to target increases)
+        4. A better vehicle is available at current node
+        
+        Args:
+            observation: Current observation
+            action_space_size: Size of action space
+            
+        Returns:
+            Tuple of (action_index, justification_string)
+        """
+        if action_space_size <= 1:
+            return 0, "Passing (not aboard vehicle)"
+        
+        # Get current position - handle both observation scenarios
+        my_position = observation.get('my_position')
+        if my_position is None:
+            # Full observation scenario - extract from agent_positions
+            agent_positions = observation.get('agent_positions', {})
+            my_position = agent_positions.get(self.agent_id)
+        
+        # Only unboard at nodes, not on edges
+        if isinstance(my_position, tuple):
+            return 0, "Passing (on edge)"
+        
+        if my_position is None:
+            return 0, "Passing (position unknown)"
+        
+        current_node = my_position
+        
+        # Check if aboard a vehicle
+        human_aboard = observation.get('human_aboard', {})
+        aboard_vehicle = human_aboard.get(self.agent_id)
+        
+        if not aboard_vehicle:
+            return 0, "Passing (not aboard vehicle)"
+        
+        # Get agent attributes to find walking speed
+        agent_attributes = observation.get('agent_attributes', {})
+        my_attributes = agent_attributes.get(self.agent_id, {})
+        walking_speed = my_attributes.get('speed', 1.0)
+        
+        # Compute walking distance from current node to target
+        current_to_target = self._compute_walking_distance_to_target(current_node, walking_speed)
+        
+        # CASE 1: If we're at the target, definitely unboard
+        if current_node in self.target_nodes:
+            self.previous_node = current_node
+            self.planned_exit_node = None
+            return 1, f"Unboarding (arrived at target node {current_node})"
+        
+        # CASE 2: If we're at the planned exit node, unboard
+        if self.planned_exit_node is not None and current_node == self.planned_exit_node:
+            self.previous_node = current_node
+            self.planned_exit_node = None
+            return 1, f"Unboarding (arrived at planned exit node {current_node})"
+        
+        # CASE 3: Check if there's a better vehicle available at current node
+        # This should be checked BEFORE wrong direction, so humans can switch vehicles
+        vehicle_destinations = observation.get('vehicle_destinations', {})
+        action_mapping = observation.get('action_mapping', {})
+        details = action_mapping.get('details', {})
+        
+        # Get current vehicle's destination
+        current_vehicle_dest = vehicle_destinations.get(aboard_vehicle)
+        
+        # Find all vehicles at current node (excluding the one we're on)
+        for action_idx in range(1, action_space_size):
+            vehicle_id = details.get(action_idx)
+            if vehicle_id and vehicle_id != aboard_vehicle:
+                destination = vehicle_destinations.get(vehicle_id)
+                if destination is not None:
+                    # Compute path for this alternative vehicle
+                    path = self._compute_shortest_duration_path(current_node, destination)
+                    if path and isinstance(path, list):
+                        nodes_on_path = self._get_nodes_on_path(path)
+                        
+                        # Find the best node on this vehicle's path
+                        best_z_on_alt = None
+                        best_z_distance = float('inf')
+                        
+                        for z in nodes_on_path:
+                            z_to_target = self._compute_walking_distance_to_target(z, walking_speed)
+                            if z_to_target < best_z_distance:
+                                best_z_distance = z_to_target
+                                best_z_on_alt = z
+                        
+                        # Compare with our current situation
+                        # If the alternative vehicle gets us closer to target
+                        if best_z_on_alt is not None and best_z_distance < current_to_target:
+                            # This vehicle is better! Unboard to switch
+                            self.previous_node = current_node
+                            self.planned_exit_node = None
+                            return 1, f"Unboarding (better vehicle {vehicle_id} available, can reach node {best_z_on_alt} closer to target)"
+        
+        # CASE 4: Check if vehicle is going wrong direction
+        if self.previous_node is not None:
+            # Compute walking distance from previous node to target
+            previous_to_target = self._compute_walking_distance_to_target(self.previous_node, walking_speed)
+            
+            # If current distance is larger than previous, vehicle is going wrong direction
+            if current_to_target > previous_to_target:
+                self.previous_node = current_node
+                self.planned_exit_node = None
+                return 1, f"Unboarding (vehicle going wrong direction: distance increased from {previous_to_target:.1f} to {current_to_target:.1f})"
+        
+        # Update previous node and stay on vehicle
+        self.previous_node = current_node
+        return 0, f"Staying aboard (moving toward target, distance: {current_to_target:.1f})"
+    
     def reset(self):
-        """Reset policy state (no state to reset for this policy)."""
-        pass
+        """Reset policy state."""
+        self.previous_node = None
+        self.planned_exit_node = None
