@@ -49,7 +49,7 @@ def main():
     print("\n" + "=" * 70)
     print("Step 1: ROUTING - Vehicle sets destination to node 2")
     print("=" * 70)
-    env.step_type = 'routing'
+    # Environment starts in routing step after reset
     actions = {
         'human_0': 0,  # Pass
         'human_1': 0,  # Pass
@@ -58,11 +58,15 @@ def main():
     env.step(actions)
     env.render()
     
-    # Step 2: Boarding
+    # Step 2: Unboarding (skipped - call with pass actions)
+    actions = {agent: 0 for agent in env.agents}  # All pass
+    env.step(actions)
+    
+    # Step 3: Boarding
     print("\n" + "=" * 70)
-    print("Step 2: BOARDING - Both humans try to board vehicle")
+    print("Step 3: BOARDING - Both humans try to board vehicle")
     print("=" * 70)
-    env.step_type = 'boarding'
+    # Now we're in boarding step
     actions = {
         'human_0': 1,  # Board vehicle_0
         'human_1': 1,  # Board vehicle_0
@@ -72,11 +76,11 @@ def main():
     env.render()
     print(f"Vehicle capacity: {env.agent_attributes['vehicle_0']['capacity']}")
     
-    # Step 3: Departing
+    # Step 4: Departing
     print("\n" + "=" * 70)
-    print("Step 3: DEPARTING - Vehicle departs with humans aboard")
+    print("Step 4: DEPARTING - Vehicle departs with humans aboard")
     print("=" * 70)
-    env.step_type = 'departing'
+    # Now we're in departing step
     actions = {
         'human_0': 0,  # Pass (aboard, can't walk)
         'human_1': 0,  # Pass (aboard, can't walk)
@@ -87,9 +91,14 @@ def main():
     print(f"After step - Real time: {env.real_time:.2f}")
     env.render()
     
-    # Step 4: Continue departing (time advances)
+    # Cycle through to next departing step
+    for _ in range(3):  # routing, unboarding, boarding
+        actions = {agent: 0 for agent in env.agents}
+        env.step(actions)
+    
+    # Step 5: Continue departing (time advances)
     print("\n" + "=" * 70)
-    print("Step 4: DEPARTING - Time advances, agents move along edge")
+    print("Step 5: DEPARTING - Time advances, agents move along edge")
     print("=" * 70)
     actions = {
         'human_0': 0,
@@ -101,11 +110,16 @@ def main():
     print(f"After step - Real time: {env.real_time:.2f}")
     env.render()
     
-    # Step 5: Unboarding
+    # Cycle to unboarding step
+    for _ in range(2):  # routing, unboarding
+        actions = {agent: 0 for agent in env.agents}
+        env.step(actions)
+    
+    # Step 6: Unboarding
     print("\n" + "=" * 70)
-    print("Step 5: UNBOARDING - One human unboards")
+    print("Step 6: UNBOARDING - One human unboards")
     print("=" * 70)
-    env.step_type = 'unboarding'
+    # Now we're in unboarding step
     actions = {
         'human_0': 1,  # Unboard
         'human_1': 0,  # Stay aboard
@@ -114,11 +128,16 @@ def main():
     env.step(actions)
     env.render()
     
-    # Step 6: Departing again
+    # Cycle to departing step
+    for _ in range(2):  # boarding, departing
+        actions = {agent: 0 for agent in env.agents}
+        env.step(actions)
+    
+    # Step 7: Departing again
     print("\n" + "=" * 70)
-    print("Step 6: DEPARTING - Human walks, vehicle departs")
+    print("Step 7: DEPARTING - Human walks, vehicle departs")
     print("=" * 70)
-    env.step_type = 'departing'
+    # Now we're in departing step
     outgoing = list(env.network.out_edges(1))
     print(f"Available edges from node 1: {outgoing}")
     

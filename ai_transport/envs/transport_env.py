@@ -196,11 +196,36 @@ class parallel_env(ParallelEnv):
         self.agent_positions = None
         self.vehicle_destinations = None
         self.human_aboard = None  # For each human: None or vehicle ID
-        self.step_type = None  # One of: 'routing', 'unboarding', 'boarding', 'departing'
+        self._step_type = None  # One of: 'routing', 'unboarding', 'boarding', 'departing' (private, use step_type property)
         
         # Cached network observation data (constant throughout episode)
         self._cached_network_nodes = None
         self._cached_network_edges = None
+    
+    @property
+    def step_type(self):
+        """Read-only property for current step type in the cycle.
+        
+        The step type automatically cycles through: routing -> unboarding -> boarding -> departing
+        when step() is called. To skip a step type, call step() with default actions (all agents pass).
+        
+        Returns:
+            str: One of 'routing', 'unboarding', 'boarding', 'departing'
+        """
+        return self._step_type
+    
+    def _set_step_type_for_testing(self, step_type: str):
+        """Internal method to set step_type directly for testing purposes only.
+        
+        This method bypasses the normal step cycle and should ONLY be used in unit tests.
+        Regular code should never call this - use step() with pass actions to cycle through steps.
+        
+        Args:
+            step_type: One of 'routing', 'unboarding', 'boarding', 'departing'
+        """
+        if step_type not in ['routing', 'unboarding', 'boarding', 'departing']:
+            raise ValueError(f"Invalid step_type: {step_type}")
+        self._step_type = step_type
 
     def _create_default_network(self):
         """Create a simple default network for testing"""
@@ -1196,7 +1221,7 @@ class parallel_env(ParallelEnv):
         self.vehicle_destinations = {agent: None for agent in self.vehicle_agents}
         
         # Initialize step type - start with routing
-        self.step_type = 'routing'
+        self._step_type = 'routing'
         
         # Cache network data for observations (constant throughout episode)
         self._cached_network_nodes = list(self.network.nodes())
@@ -1457,8 +1482,8 @@ class parallel_env(ParallelEnv):
         
         # Automatically cycle to next step type AFTER processing current step
         step_cycle = ['routing', 'unboarding', 'boarding', 'departing']
-        current_idx = step_cycle.index(self.step_type)
-        self.step_type = step_cycle[(current_idx + 1) % len(step_cycle)]
+        current_idx = step_cycle.index(self._step_type)
+        self._step_type = step_cycle[(current_idx + 1) % len(step_cycle)]
         
         # Generate observations based on scenario
         observations = self._generate_observations()

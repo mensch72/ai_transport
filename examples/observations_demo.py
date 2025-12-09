@@ -139,7 +139,7 @@ def main():
     
     env = parallel_env(num_humans=1, num_vehicles=1, network=G)
     env.reset()
-    env.step_type = 'routing'
+    # Environment starts in 'routing' step after reset
     
     actions = {agent: 0 for agent in env.agents}
     obs, rewards, terms, truncs, infos = env.step(actions)
