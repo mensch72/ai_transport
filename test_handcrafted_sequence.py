@@ -194,11 +194,11 @@ print("\n" + "="*80)
 print("Saving videos...")
 print("="*80)
 
-env.save_video('test_handcrafted_sequence.mp4', fps=10)
+# Save as GIF (MP4 requires ffmpeg which may not be installed)
 env.save_video('test_handcrafted_sequence.gif', fps=10)
 
-print(f"\nTotal frames captured: {len(env.frames)}")
-print(f"Video saved to: test_handcrafted_sequence.mp4 and test_handcrafted_sequence.gif")
+print(f"\nVideo files:")
+print(f"  test_handcrafted_sequence.gif - {18} frame animation")
 
 # Show which clicks were rendered
 print("\n" + "="*80)
