@@ -194,11 +194,24 @@ print("\n" + "="*80)
 print("Saving videos...")
 print("="*80)
 
-# Save as GIF (MP4 requires ffmpeg which may not be installed)
+# Try to save both MP4 and GIF
+# MP4 first (requires ffmpeg)
+try:
+    env.frames_copy = env.frames.copy()  # Save frames before they're cleared
+    env.save_video('test_handcrafted_sequence.mp4', fps=10)
+    env.frames = env.frames_copy  # Restore for GIF
+except:
+    pass
+
+# Save as GIF
 env.save_video('test_handcrafted_sequence.gif', fps=10)
 
-print(f"\nVideo files:")
-print(f"  test_handcrafted_sequence.gif - {18} frame animation")
+print(f"\nVideo files generated:")
+import os
+if os.path.exists('test_handcrafted_sequence.mp4'):
+    print(f"  test_handcrafted_sequence.mp4")
+if os.path.exists('test_handcrafted_sequence.gif'):
+    print(f"  test_handcrafted_sequence.gif")
 
 # Show which clicks were rendered
 print("\n" + "="*80)

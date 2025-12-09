@@ -665,20 +665,8 @@ class parallel_env(ParallelEnv):
             # Restore current positions (at t_currentevent)
             self.agent_positions = saved_positions
         
-        # Save state for next render call (this becomes the new "last event")
-        self._last_event_time = t_currentevent
-        self._positions_at_last_event = self.agent_positions.copy()
-        self._speeds_at_last_event = {}
-        
-        # Compute speeds for agents currently on edges
-        for agent in self.agents:
-            pos = self.agent_positions.get(agent)
-            if isinstance(pos, tuple):
-                edge, coord = pos
-                edge_data = self.network[edge[0]][edge[1]]
-                self._speeds_at_last_event[agent] = self._get_agent_speed(agent, edge_data)
-            else:
-                self._speeds_at_last_event[agent] = 0.0
+        # Note: We don't save state here anymore - it's saved BEFORE movement
+        # in _process_departing_actions() so that we have the correct starting positions
     
     def _render_graphical(self, goal_info=None, value_dict=None, title=None):
         """
@@ -1683,6 +1671,24 @@ class parallel_env(ParallelEnv):
         # If there are agents on edges, advance time and move them
         if remaining_durations:
             delta_t = min(remaining_durations)
+            
+            # IMPORTANT: Save state BEFORE movement for video rendering
+            # When render() is called after this step, it needs to know where agents
+            # were at the START of this time period to interpolate correctly
+            if getattr(self, '_recording', False):
+                self._positions_at_last_event = self.agent_positions.copy()
+                self._speeds_at_last_event = {}
+                self._last_event_time = self.real_time
+                
+                # Compute speeds for agents on edges
+                for agent in self.agents:
+                    pos = self.agent_positions.get(agent)
+                    if isinstance(pos, tuple):
+                        edge, coord = pos
+                        edge_data = self.network[edge[0]][edge[1]]
+                        self._speeds_at_last_event[agent] = self._get_agent_speed(agent, edge_data)
+                    else:
+                        self._speeds_at_last_event[agent] = 0.0
             
             # Move all agents on edges
             for agent in self.agents:
