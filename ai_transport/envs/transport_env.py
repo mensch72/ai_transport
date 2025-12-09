@@ -1606,7 +1606,24 @@ class parallel_env(ParallelEnv):
         Process departing step: vehicles and humans (not aboard) at nodes can depart/walk into edges.
         All agents on edges move. Real time advances by minimum remaining duration on edges.
         """
-        # First, process departing actions for agents at nodes
+        # Initialize movement tracking dictionary if needed
+        if not hasattr(self, '_agent_movement_start_time'):
+            self._agent_movement_start_time = {}
+            self._agent_movement_start_coord = {}
+        
+        # First, ensure all agents already on edges have movement tracking set up
+        # This handles agents that were placed on edges during initialization or from previous steps
+        for agent in self.agents:
+            pos = self.agent_positions.get(agent)
+            if pos is not None and isinstance(pos, tuple):
+                # Agent is on an edge
+                if agent not in self._agent_movement_start_time:
+                    # No tracking exists - initialize it with current position
+                    edge, coord = pos
+                    self._agent_movement_start_time[agent] = self.real_time
+                    self._agent_movement_start_coord[agent] = coord
+        
+        # Second, process departing actions for agents at nodes
         for agent, action in actions.items():
             if action > 0:  # action 0 is pass
                 pos = self.agent_positions.get(agent)
@@ -1623,9 +1640,6 @@ class parallel_env(ParallelEnv):
                         if agent in self.vehicle_agents:
                             self.agent_positions[agent] = (chosen_edge, 0.0)
                             # Track movement start for interpolation
-                            if not hasattr(self, '_agent_movement_start_time'):
-                                self._agent_movement_start_time = {}
-                                self._agent_movement_start_coord = {}
                             self._agent_movement_start_time[agent] = self.real_time
                             self._agent_movement_start_coord[agent] = 0.0
                         # Humans can only depart if not aboard
@@ -1634,9 +1648,6 @@ class parallel_env(ParallelEnv):
                             if aboard is None:
                                 self.agent_positions[agent] = (chosen_edge, 0.0)
                                 # Track movement start for interpolation
-                                if not hasattr(self, '_agent_movement_start_time'):
-                                    self._agent_movement_start_time = {}
-                                    self._agent_movement_start_coord = {}
                                 self._agent_movement_start_time[agent] = self.real_time
                                 self._agent_movement_start_coord[agent] = 0.0
         
