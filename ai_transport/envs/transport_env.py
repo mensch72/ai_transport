@@ -1126,8 +1126,7 @@ class parallel_env(ParallelEnv):
         """
         Save recorded frames as video or GIF.
         
-        Tries MP4 using matplotlib's FFMpegWriter first (like other examples),
-        falls back to GIF using PIL if ffmpeg not available.
+        Uses imageio with ffmpeg for fast MP4 conversion, falls back to GIF using PIL if needed.
         
         Args:
             filename: Output filename (can be .mp4 or .gif)
@@ -1140,38 +1139,37 @@ class parallel_env(ParallelEnv):
         print(f"Saving {len(self.frames)} frames...")
         
         try:
-            # Try MP4 with matplotlib's FFMpegWriter first
-            try:
-                import matplotlib
-                matplotlib.use('Agg')
-                import matplotlib.pyplot as plt
-                import matplotlib.animation as animation
-                
-                fig, ax = plt.subplots(figsize=(12, 10))
-                ax.axis('off')
-                
-                im = ax.imshow(self.frames[0])
-                
-                def update(frame_idx):
-                    im.set_array(self.frames[frame_idx])
-                    return [im]
-                
-                anim = animation.FuncAnimation(
-                    fig, update, frames=len(self.frames),
-                    interval=200, blit=True, repeat=True
-                )
-                
-                writer = animation.FFMpegWriter(fps=fps, bitrate=2000)
-                anim.save(filename, writer=writer)
-                print(f"✓ Video saved to {filename} ({len(self.frames)} frames)")
-                plt.close(fig)
-                return
-            except Exception as e:
-                print(f"Could not save MP4 ({e}), trying GIF with PIL...")
+            # Determine output format from filename
+            is_gif = filename.lower().endswith('.gif')
             
-            # Fall back to GIF using PIL directly (more reliable than matplotlib)
+            if not is_gif:
+                # Try MP4 using imageio with ffmpeg (much faster than matplotlib)
+                try:
+                    import imageio
+                    
+                    # Save as MP4 using imageio with ffmpeg
+                    writer = imageio.get_writer(
+                        filename, 
+                        fps=fps,
+                        codec='libx264',
+                        pixelformat='yuv420p',
+                        quality=8  # 0-10, higher is better quality
+                    )
+                    
+                    for frame in self.frames:
+                        writer.append_data(frame)
+                    
+                    writer.close()
+                    print(f"✓ Video saved to {filename} ({len(self.frames)} frames)")
+                    return
+                    
+                except Exception as e:
+                    print(f"Could not save MP4 with imageio ({e}), trying GIF...")
+                    # Fall through to GIF saving
+                    filename = filename.replace('.mp4', '.gif')
+            
+            # Save as GIF using PIL
             from PIL import Image
-            gif_filename = filename.replace('.mp4', '.gif')
             
             # Convert frames to PIL Images
             pil_frames = [Image.fromarray(frame) for frame in self.frames]
@@ -1179,13 +1177,13 @@ class parallel_env(ParallelEnv):
             # Save as animated GIF
             duration_ms = int(1000 / fps)
             pil_frames[0].save(
-                gif_filename,
+                filename,
                 save_all=True,
                 append_images=pil_frames[1:],
                 duration=duration_ms,
                 loop=0
             )
-            print(f"✓ Video saved as GIF to {gif_filename} ({len(self.frames)} frames)")
+            print(f"✓ Video saved as GIF to {filename} ({len(self.frames)} frames)")
             
         except Exception as e:
             print(f"Error saving video: {e}")
