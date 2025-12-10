@@ -180,9 +180,13 @@ class parallel_env(ParallelEnv):
         self.fig = None
         self.ax = None
         self.frames = []  # For video recording
-        self._last_render_time = 0.0  # Track last "click" time for uniform frame generation
         self._time_per_frame = 0.02  # Capture frame every 0.02 time units ("clicks")
         self._recording = False
+        
+        # State for video rendering interpolation
+        self._last_event_time = 0.0  # Time of last arrival event (when render was called after step)
+        self._positions_at_last_event = {}  # Agent positions at last event
+        self._speeds_at_last_event = {}  # Agent speeds at last event (for agents on edges)
         
         # Artist-based rendering: persistent matplotlib objects
         self._artists_initialized = False
@@ -558,41 +562,99 @@ class parallel_env(ParallelEnv):
         """
         Render frames at uniform time intervals for smooth video playback.
         
-        Generates frames at regular "clicks" (time intervals) between _last_render_time
-        and current real_time, ensuring seamless motion regardless of decision step timing.
+        Generates frames at integer multiples of time_per_frame (clicks) that fall after
+        the last arrival event.
+        
+        Key variables:
+        - t_lastevent: Time of last arrival event (when render() was called after step())
+        - t_currentevent: Current time (this arrival event)
+        - At t_lastevent, we saved each agent's position and speed (if on edge)
+        - For any click t > t_lastevent: position_at_t = position_at_lastevent + speed * (t - t_lastevent)
         
         Args:
             goal_info: Optional dict with goal visualization info
             value_dict: Optional dict mapping nodes to V-values for coloring
             title: Optional custom title (overrides default)
         """
-        t_now = self.real_time
-        t_last = self._last_render_time
+        t_currentevent = self.real_time  # Current arrival event time
         
-        # Calculate how many frames to render
-        # Render at t_last + X, t_last + 2X, ..., t_last + kX
-        # where t_last + (k+1)*X > t_now
+        # Get saved state from last event
+        if not hasattr(self, '_last_event_time'):
+            # First render call - initialize
+            self._last_event_time = 0.0
+            self._positions_at_last_event = {}
+            self._speeds_at_last_event = {}
         
-        click = self._time_per_frame
-        num_frames = int((t_now - t_last) / click)
+        t_lastevent = self._last_event_time
+        positions_at_lastevent = self._positions_at_last_event if self._positions_at_last_event else self.agent_positions.copy()
+        speeds_at_lastevent = self._speeds_at_last_event if self._speeds_at_last_event else {}
         
-        if num_frames > 0:
-            # Save current agent positions (at t_now)
+        # Find all clicks (integer multiples of time_per_frame) in the range (t_lastevent, t_currentevent]
+        click_interval = self._time_per_frame
+        
+        # First click index after t_lastevent
+        first_click_index = int(t_lastevent / click_interval) + 1
+        
+        # Last click index at or before t_currentevent
+        last_click_index = int(t_currentevent / click_interval)
+        
+        # Generate frames for all clicks
+        if first_click_index <= last_click_index:
+            # Save current positions (at t_currentevent)
             saved_positions = self.agent_positions.copy()
             
-            for i in range(1, num_frames + 1):
-                frame_time = t_last + i * click
+            for click_index in range(first_click_index, last_click_index + 1):
+                t_click = click_index * click_interval
                 
-                # Compute agent positions at this intermediate frame_time
-                self._compute_positions_at_time(frame_time)
+                # Compute agent positions at this click time
+                for agent in self.agents:
+                    pos_at_lastevent = positions_at_lastevent.get(agent)
+                    speed = speeds_at_lastevent.get(agent, 0.0)
+                    
+                    if isinstance(pos_at_lastevent, tuple):
+                        # Agent was on edge at last event
+                        edge, coord_at_lastevent = pos_at_lastevent
+                        
+                        # Compute position at click: coord = coord_at_lastevent + speed * (t_click - t_lastevent)
+                        elapsed = t_click - t_lastevent
+                        coord_at_click = coord_at_lastevent + speed * elapsed
+                        
+                        # Get edge length
+                        edge_data = self.network[edge[0]][edge[1]]
+                        edge_length = edge_data['length']
+                        
+                        # Check if agent would have reached end of edge
+                        if coord_at_click >= edge_length - 0.001:
+                            # Agent reached end - check if this happened by t_currentevent
+                            elapsed_to_current = t_currentevent - t_lastevent
+                            coord_at_currentevent = coord_at_lastevent + speed * elapsed_to_current
+                            
+                            if coord_at_currentevent >= edge_length - 0.001:
+                                # Agent arrived at node at or before t_currentevent
+                                self.agent_positions[agent] = edge[1]
+                            else:
+                                # Agent hasn't arrived yet, clamp to edge
+                                self.agent_positions[agent] = (edge, min(coord_at_click, edge_length))
+                        else:
+                            # Agent still on edge
+                            self.agent_positions[agent] = (edge, coord_at_click)
+                    else:
+                        # Agent was at node at last event, stays there
+                        self.agent_positions[agent] = pos_at_lastevent
                 
-                # Count humans aboard vehicles at this frame time
+                # Synchronize humans aboard vehicles
+                for human in self.human_agents:
+                    aboard = self.human_aboard.get(human)
+                    if aboard is not None:
+                        self.agent_positions[human] = self.agent_positions[aboard]
+                
+                # Count humans aboard vehicles
                 humans_aboard = sum(1 for h in self.human_agents if self.human_aboard.get(h) is not None)
                 
-                # Create title showing continuous time and humans aboard
-                frame_title = f"Time: {frame_time:.1f}s | Humans aboard: {humans_aboard}"
+                # Create title
+                frame_title = f"Time: {t_click:.2f}s | Humans aboard: {humans_aboard}"
                 
-                # Render this frame with interpolated positions
+                # Render this frame
                 self._render_single_frame(
                     goal_info=goal_info,
                     value_dict=value_dict,
@@ -600,53 +662,11 @@ class parallel_env(ParallelEnv):
                     capture_frame=True
                 )
             
-            # Restore current agent positions (at t_now)
+            # Restore current positions (at t_currentevent)
             self.agent_positions = saved_positions
-            
-            # Update last render time to the last click before t_now
-            self._last_render_time = t_last + num_frames * click
-        else:
-            # If not enough time has passed for a new frame, still update state
-            # but don't capture a frame
-            pass
-    
-    def _compute_positions_at_time(self, target_time):
-        """
-        Compute where each agent would be at a specific time point by interpolating
-        their movement along edges.
         
-        This allows rendering frames at arbitrary intermediate times between decision steps.
-        
-        Args:
-            target_time: The time point to compute positions for
-        """
-        # For each agent that is on an edge, compute their position at target_time
-        for agent in self.agents:
-            pos = self.agent_positions.get(agent)
-            
-            if isinstance(pos, tuple):
-                # Agent is on an edge
-                edge, current_coord = pos
-                
-                # Check if agent has movement state information
-                if hasattr(self, '_agent_movement_start_time') and agent in self._agent_movement_start_time:
-                    start_time = self._agent_movement_start_time[agent]
-                    start_coord = self._agent_movement_start_coord.get(agent, 0.0)
-                    speed = self.agent_attributes.get(agent, {}).get('speed', 1.0)
-                    
-                    # Compute how far agent has traveled from start_coord at target_time
-                    elapsed = target_time - start_time
-                    distance_traveled = speed * elapsed
-                    
-                    # Interpolate position along edge
-                    interpolated_coord = start_coord + distance_traveled
-                    
-                    # Clamp to edge bounds
-                    edge_length = self.network[edge[0]][edge[1]]['length']
-                    interpolated_coord = max(0.0, min(edge_length, interpolated_coord))
-                    
-                    # Update position to interpolated value
-                    self.agent_positions[agent] = (edge, interpolated_coord)
+        # Note: We don't save state here anymore - it's saved BEFORE movement
+        # in _process_departing_actions() so that we have the correct starting positions
     
     def _render_graphical(self, goal_info=None, value_dict=None, title=None):
         """
@@ -1106,8 +1126,7 @@ class parallel_env(ParallelEnv):
         """
         Save recorded frames as video or GIF.
         
-        Tries MP4 using matplotlib's FFMpegWriter first (like other examples),
-        falls back to GIF using PIL if ffmpeg not available.
+        Uses imageio with ffmpeg for fast MP4 conversion, falls back to GIF using PIL if needed.
         
         Args:
             filename: Output filename (can be .mp4 or .gif)
@@ -1120,38 +1139,37 @@ class parallel_env(ParallelEnv):
         print(f"Saving {len(self.frames)} frames...")
         
         try:
-            # Try MP4 with matplotlib's FFMpegWriter first
-            try:
-                import matplotlib
-                matplotlib.use('Agg')
-                import matplotlib.pyplot as plt
-                import matplotlib.animation as animation
-                
-                fig, ax = plt.subplots(figsize=(12, 10))
-                ax.axis('off')
-                
-                im = ax.imshow(self.frames[0])
-                
-                def update(frame_idx):
-                    im.set_array(self.frames[frame_idx])
-                    return [im]
-                
-                anim = animation.FuncAnimation(
-                    fig, update, frames=len(self.frames),
-                    interval=200, blit=True, repeat=True
-                )
-                
-                writer = animation.FFMpegWriter(fps=fps, bitrate=2000)
-                anim.save(filename, writer=writer)
-                print(f"✓ Video saved to {filename} ({len(self.frames)} frames)")
-                plt.close(fig)
-                return
-            except Exception as e:
-                print(f"Could not save MP4 ({e}), trying GIF with PIL...")
+            # Determine output format from filename
+            is_gif = filename.lower().endswith('.gif')
             
-            # Fall back to GIF using PIL directly (more reliable than matplotlib)
+            if not is_gif:
+                # Try MP4 using imageio with ffmpeg (much faster than matplotlib)
+                try:
+                    import imageio
+                    
+                    # Save as MP4 using imageio with ffmpeg
+                    writer = imageio.get_writer(
+                        filename, 
+                        fps=fps,
+                        codec='libx264',
+                        pixelformat='yuv420p',
+                        quality=8  # 0-10, higher is better quality
+                    )
+                    
+                    for frame in self.frames:
+                        writer.append_data(frame)
+                    
+                    writer.close()
+                    print(f"✓ Video saved to {filename} ({len(self.frames)} frames)")
+                    return
+                    
+                except Exception as e:
+                    print(f"Could not save MP4 with imageio ({e}), trying GIF...")
+                    # Fall through to GIF saving
+                    filename = filename.replace('.mp4', '.gif')
+            
+            # Save as GIF using PIL
             from PIL import Image
-            gif_filename = filename.replace('.mp4', '.gif')
             
             # Convert frames to PIL Images
             pil_frames = [Image.fromarray(frame) for frame in self.frames]
@@ -1159,13 +1177,13 @@ class parallel_env(ParallelEnv):
             # Save as animated GIF
             duration_ms = int(1000 / fps)
             pil_frames[0].save(
-                gif_filename,
+                filename,
                 save_all=True,
                 append_images=pil_frames[1:],
                 duration=duration_ms,
                 loop=0
             )
-            print(f"✓ Video saved as GIF to {gif_filename} ({len(self.frames)} frames)")
+            print(f"✓ Video saved as GIF to {filename} ({len(self.frames)} frames)")
             
         except Exception as e:
             print(f"Error saving video: {e}")
@@ -1209,7 +1227,9 @@ class parallel_env(ParallelEnv):
         
         # Initialize state components
         self.real_time = 0.0
-        self._last_render_time = 0.0  # For uniform frame generation in render()
+        self._last_event_time = 0.0  # Track last arrival event time
+        self._positions_at_last_event = {}  # Track positions at last event
+        self._speeds_at_last_event = {}  # Track speeds at last event
         
         # Initialize empty dictionaries first (needed by initialize_random_positions)
         self.agent_positions = {}
@@ -1596,7 +1616,7 @@ class parallel_env(ParallelEnv):
         Process departing step: vehicles and humans (not aboard) at nodes can depart/walk into edges.
         All agents on edges move. Real time advances by minimum remaining duration on edges.
         """
-        # First, process departing actions for agents at nodes
+        # Process departing actions for agents at nodes
         for agent, action in actions.items():
             if action > 0:  # action 0 is pass
                 pos = self.agent_positions.get(agent)
@@ -1612,23 +1632,11 @@ class parallel_env(ParallelEnv):
                         # Vehicles can always depart
                         if agent in self.vehicle_agents:
                             self.agent_positions[agent] = (chosen_edge, 0.0)
-                            # Track movement start for interpolation
-                            if not hasattr(self, '_agent_movement_start_time'):
-                                self._agent_movement_start_time = {}
-                                self._agent_movement_start_coord = {}
-                            self._agent_movement_start_time[agent] = self.real_time
-                            self._agent_movement_start_coord[agent] = 0.0
                         # Humans can only depart if not aboard
                         elif agent in self.human_agents:
                             aboard = self.human_aboard.get(agent)
                             if aboard is None:
                                 self.agent_positions[agent] = (chosen_edge, 0.0)
-                                # Track movement start for interpolation
-                                if not hasattr(self, '_agent_movement_start_time'):
-                                    self._agent_movement_start_time = {}
-                                    self._agent_movement_start_coord = {}
-                                self._agent_movement_start_time[agent] = self.real_time
-                                self._agent_movement_start_coord[agent] = 0.0
         
         # Now compute movement for all agents on edges
         # Find minimum remaining duration on edges
@@ -1662,17 +1670,27 @@ class parallel_env(ParallelEnv):
         if remaining_durations:
             delta_t = min(remaining_durations)
             
-            # For smooth video, subdivide movement into multiple substeps when recording
-            num_substeps = 5 if getattr(self, '_recording', False) else 1
-            substep_dt = delta_t / num_substeps
+            # IMPORTANT: Save state BEFORE movement for video rendering
+            # When render() is called after this step, it needs to know where agents
+            # were at the START of this time period to interpolate correctly
+            if getattr(self, '_recording', False):
+                self._positions_at_last_event = self.agent_positions.copy()
+                self._speeds_at_last_event = {}
+                self._last_event_time = self.real_time
+                
+                # Compute speeds for agents on edges
+                for agent in self.agents:
+                    pos = self.agent_positions.get(agent)
+                    if isinstance(pos, tuple):
+                        edge, coord = pos
+                        edge_data = self.network[edge[0]][edge[1]]
+                        self._speeds_at_last_event[agent] = self._get_agent_speed(agent, edge_data)
+                    else:
+                        self._speeds_at_last_event[agent] = 0.0
             
-            # Store starting positions and compute target positions
-            start_positions = {}
-            target_positions = {}
-            
+            # Move all agents on edges
             for agent in self.agents:
                 pos = self.agent_positions.get(agent)
-                start_positions[agent] = pos
                 
                 if pos is not None and isinstance(pos, tuple):
                     edge, coord = pos
@@ -1682,70 +1700,19 @@ class parallel_env(ParallelEnv):
                     edge_length = edge_data['length']
                     
                     if abs(new_coord - edge_length) < self.FLOAT_EPSILON:
-                        target_positions[agent] = edge[1]  # Reached target node
+                        # Reached target node
+                        self.agent_positions[agent] = edge[1]
                     else:
-                        target_positions[agent] = (edge, new_coord)
-                else:
-                    target_positions[agent] = pos
+                        # Still on edge
+                        self.agent_positions[agent] = (edge, new_coord)
             
-            # Render intermediate frames with interpolated positions
-            for substep in range(num_substeps):
-                fraction = (substep + 1) / num_substeps
-                
-                # Interpolate each agent's position
-                for agent in self.agents:
-                    start_pos = start_positions[agent]
-                    target_pos = target_positions[agent]
-                    
-                    # Only interpolate if starting on an edge
-                    if start_pos is not None and isinstance(start_pos, tuple):
-                        edge, start_coord = start_pos
-                        edge_data = self.network[edge[0]][edge[1]]
-                        edge_length = edge_data['length']
-                        
-                        if isinstance(target_pos, tuple):
-                            # Still on edge at end
-                            _, target_coord = target_pos
-                            interp_coord = start_coord + (target_coord - start_coord) * fraction
-                            self.agent_positions[agent] = (edge, interp_coord)
-                        else:
-                            # Reached node at end
-                            interp_coord = start_coord + (edge_length - start_coord) * fraction
-                            if fraction >= 1.0:
-                                self.agent_positions[agent] = target_pos  # Final node
-                            else:
-                                self.agent_positions[agent] = (edge, interp_coord)
-                
-                # Update humans aboard vehicles
-                for human in self.human_agents:
-                    aboard = self.human_aboard.get(human)
-                    if aboard is not None:
-                        self.agent_positions[human] = self.agent_positions[aboard]
-                
-                # Render this intermediate state if recording
-                if getattr(self, '_recording', False):
-                    goal_info = getattr(self, '_last_goal_info', None)
-                    value_dict = getattr(self, '_last_value_dict', None)
-                    title = getattr(self, '_last_title', None)
-                    self._render_graphical(goal_info=goal_info, value_dict=value_dict, title=title)
-            
-            # Set final positions
-            for agent in self.agents:
-                self.agent_positions[agent] = target_positions[agent]
-                # Clear movement tracking if agent reached a node
-                if not isinstance(target_positions[agent], tuple):
-                    if hasattr(self, '_agent_movement_start_time') and agent in self._agent_movement_start_time:
-                        del self._agent_movement_start_time[agent]
-                    if hasattr(self, '_agent_movement_start_coord') and agent in self._agent_movement_start_coord:
-                        del self._agent_movement_start_coord[agent]
-            
-            # Update humans aboard to final positions
+            # Update humans aboard to match vehicle positions
             for human in self.human_agents:
                 aboard = self.human_aboard.get(human)
                 if aboard is not None:
                     self.agent_positions[human] = self.agent_positions[aboard]
             
-            # Advance real time (once, not incrementally)
+            # Advance real time
             self.real_time += delta_t
         else:
             # No movement - just update humans aboard
