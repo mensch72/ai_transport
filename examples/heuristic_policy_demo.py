@@ -13,6 +13,7 @@ import networkx as nx
 from ai_transport import parallel_env
 from ai_transport.policies import HeuristicRoutingHumanPolicy
 
+#Todo: implement a simple vehicle policy for demonstration purposes
 
 class SimpleVehiclePolicy:
     """Simple vehicle policy that keeps destination and waits before departing."""
