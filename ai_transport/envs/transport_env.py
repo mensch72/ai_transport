@@ -667,7 +667,23 @@ class parallel_env(ParallelEnv):
         
         # Note: We don't save state here anymore - it's saved BEFORE movement
         # in _process_departing_actions() so that we have the correct starting positions
-    
+
+        # ---- FIX: advance render anchor to current event time ----
+        self._last_event_time = t_currentevent
+        self._positions_at_last_event = self.agent_positions.copy()
+
+        # speeds: 对“在边上”的 agent 记录速度；在点上就是 0
+        self._speeds_at_last_event = {}
+        for agent in self.agents:
+            pos = self.agent_positions.get(agent)
+            if isinstance(pos, tuple):
+                edge, _ = pos
+                edge_data = self.network[edge[0]][edge[1]]
+                self._speeds_at_last_event[agent] = self._get_agent_speed(agent, edge_data)
+            else:
+                self._speeds_at_last_event[agent] = 0.0
+
+
     def _render_graphical(self, goal_info=None, value_dict=None, title=None):
         """
         Graphical rendering using matplotlib.
@@ -1400,11 +1416,12 @@ class parallel_env(ParallelEnv):
                 pos = self.agent_positions.get(agent)
                 if pos is not None and not isinstance(pos, tuple):
                     # Vehicle at node can set destination
+                    #TODO: limit to reachable nodes?
                     mapping['description'][0] = 'set_destination_none'
                     mapping['details'][0] = None
                     nodes = list(self.network.nodes())
                     for i, node in enumerate(nodes):
-                        mapping['description'][i + 1] = f'set_destination_node'
+                        mapping['description'][i + 1] = f'set_destination_node'#_{node}
                         mapping['details'][i + 1] = node
                     return mapping
             # All other agents can only pass
