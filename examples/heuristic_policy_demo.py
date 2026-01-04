@@ -21,7 +21,6 @@ plt.set_loglevel('warning')
 
 
 
-#Todo: implement a simple vehicle policy for demonstration purposes
 
 class SimpleVehiclePolicy:
     """Simple vehicle policy that keeps destination and waits before departing."""
@@ -221,30 +220,20 @@ def main():
                 action, justification = policy.get_action(obs[agent], action_space_size)
                 actions[agent] = action
 
-                logging.debug(
-                    "ACTION | cycle=%d step=%s | agent=%s | action=%s/%s | just=%s",
-                    cycle, current_step, agent, action, action_space_size, justification)
-                if LOG_ACTION_MAPPING and current_step in ("boarding", "unboarding", "departing", "routing"):
-                    action_mapping = obs[agent].get("action_mapping", {})
-                    logging.debug(
-                        "ACTION_MAPPING | cycle=%d step=%s | agent=%s | chosen_action=%s |\n%s",
-                        cycle, current_step, agent, action,
-                        pformat(action_mapping))
-
                 # Track events
-                elif current_step == 'boarding' and agent in env.human_agents and action > 0:
+                if current_step == 'boarding' and agent in env.human_agents and action > 0:
                     vehicle_id = obs[agent].get('action_mapping', {}).get('details', {}).get(action)
                     boarding_events.append(f"Cycle {cycle}: {agent} boards {vehicle_id}")
                     print(f"\n   🚌 BOARDING (cycle {cycle}): {agent} boards {vehicle_id}")
                     print(f"      {justification}")
                 
-                elif current_step == 'unboarding' and agent in env.human_agents and action > 0:
+                if current_step == 'unboarding' and agent in env.human_agents and action > 0:
                     aboard = env.human_aboard.get(agent)
                     unboarding_events.append(f"Cycle {cycle}: {agent} unboards from {aboard}")
                     print(f"\n   🚶 UNBOARDING (cycle {cycle}): {agent} unboards from {aboard}")
                     print(f"      {justification}")
                 
-                elif current_step == 'departing' and agent in env.human_agents and action > 0:
+                if current_step == 'departing' and agent in env.human_agents and action > 0:
                     if env.human_aboard.get(agent) is None:  # Walking, not riding
                         edge = obs[agent].get('action_mapping', {}).get('details', {}).get(action)
                         walking_events.append(f"Cycle {cycle}: {agent} walks")
