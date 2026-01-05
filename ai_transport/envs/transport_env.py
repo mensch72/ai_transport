@@ -1519,7 +1519,15 @@ class parallel_env(ParallelEnv):
             self._process_boarding_actions(actions)
         elif self.step_type == 'departing':
             self._process_departing_actions(actions)
-        
+
+        # TODO:if all agents done, set terminations  to True, infos = {agent: {"termination_reason": "no-one is moving"} for agent in self.agents}
+        # if terminates:
+        # else:
+        # check
+        #terminate, info = self._process_....
+        #and then: infos = {agent: {"termination_reason": info} for agent in self.agents}
+
+
         # Automatically cycle to next step type AFTER processing current step
         step_cycle = ['routing', 'unboarding', 'boarding', 'departing']
         current_idx = step_cycle.index(self._step_type)
@@ -1530,7 +1538,7 @@ class parallel_env(ParallelEnv):
         
         # All rewards are constantly zero
         rewards = {agent: 0.0 for agent in self.agents}
-        
+
         terminations = {agent: False for agent in self.agents}
         truncations = {agent: False for agent in self.agents}
         infos = {agent: {} for agent in self.agents}
