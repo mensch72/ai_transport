@@ -1258,7 +1258,8 @@ class parallel_env(ParallelEnv):
         
         # Initialize vehicle destinations - all start with None
         self.vehicle_destinations = {agent: None for agent in self.vehicle_agents}
-        
+        self.human_destinations = {agent: None for agent in self.human_agents}
+
         # Initialize step type - start with routing
         self._step_type = 'routing'
         
@@ -1495,6 +1496,33 @@ class parallel_env(ParallelEnv):
         mapping['description'][0] = 'pass'
         return mapping
 
+    def terminate(self):
+        """
+        Check if the episode should terminate.
+        Returns True if all agents with an assigned destination have reached it.
+        """
+        has_active_dest = False
+        all_reached = True
+
+        for agent in self.agents:
+            dest = None
+            if agent in self.vehicle_agents:
+                dest = self.vehicle_destinations.get(agent)
+            elif agent in self.human_agents:
+                dest = self.human_destinations.get(agent)
+
+            if dest is not None:
+                has_active_dest = True
+                pos = self.agent_positions.get(agent)
+                # Must be at the specific node (not on an edge) matching destination
+                if isinstance(pos, tuple) or pos != dest:
+                    all_reached = False
+                    break
+
+        # Terminate only if there was at least one active task and all tasks are complete
+        return has_active_dest and all_reached
+
+
     def step(self, actions):
         """
         step(action) takes in an action for each agent and should return the
@@ -1520,13 +1548,6 @@ class parallel_env(ParallelEnv):
         elif self.step_type == 'departing':
             self._process_departing_actions(actions)
 
-        # TODO:if all agents done, set terminations  to True, infos = {agent: {"termination_reason": "no-one is moving"} for agent in self.agents}
-        # if terminates:
-        # else:
-        # check
-        #terminate, info = self._process_....
-        #and then: infos = {agent: {"termination_reason": info} for agent in self.agents}
-
 
         # Automatically cycle to next step type AFTER processing current step
         step_cycle = ['routing', 'unboarding', 'boarding', 'departing']
@@ -1539,7 +1560,10 @@ class parallel_env(ParallelEnv):
         # All rewards are constantly zero
         rewards = {agent: 0.0 for agent in self.agents}
 
-        terminations = {agent: False for agent in self.agents}
+        # Check termination condition
+        should_terminate = self.terminate()
+        terminations = {agent: should_terminate for agent in self.agents}
+
         truncations = {agent: False for agent in self.agents}
         infos = {agent: {} for agent in self.agents}
 

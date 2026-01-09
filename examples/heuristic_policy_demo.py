@@ -8,15 +8,10 @@ This example shows:
 4. Graphical rendering with video recording
 """
 
-import os
 import networkx as nx
 from ai_transport import parallel_env
 from ai_transport.policies import HeuristicRoutingHumanPolicy
-import logging
-from pprint import pformat
 import matplotlib.pyplot as plt
-
-# Set the log level to 'warning' (or 'error', 'critical', 'notset')
 plt.set_loglevel('warning')
 
 
