@@ -56,8 +56,6 @@ class SimpleVehiclePolicy:
 
             # Now depart if we can
             if action_space_size > 1:
-                # Take first available edge (action 1)
-
                 best_action = 0
                 best_dist = float("inf")
                 for action_id, edge in details.items():
@@ -88,8 +86,6 @@ class SimpleVehiclePolicy:
 
 
 def main():
-    LOG_ACTION_MAPPING = True
-    LOG_FULL_OBS = False
 
     print("=" * 70)
     print("AI Transport - Complex Heuristic Routing Demo with Unboarding")
@@ -240,6 +236,10 @@ def main():
         
         # Step environment
         obs, rewards, terms, truncs, infos = env.step(actions)
+
+        if any(terms.values()) or any(truncs.values()):
+            print(f"Episode ended at cycle {cycle}")
+            break
 
         # Render after departing step
         if env.step_type == 'routing':

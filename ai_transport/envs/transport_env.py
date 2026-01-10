@@ -241,13 +241,25 @@ class parallel_env(ParallelEnv):
         G.add_node(0, name="A")
         G.add_node(1, name="B")
         G.add_node(2, name="C")
-        # Add edges with required attributes
-        G.add_edge(0, 1, length=10.0, speed=5.0, capacity=10)
-        G.add_edge(1, 2, length=15.0, speed=5.0, capacity=10)
-        G.add_edge(2, 0, length=12.0, speed=5.0, capacity=10)
+
+        # Base directed cycle (ensures strong connectivity)
+        base_edges = [(0, 1), (1, 2), (2, 0)]
+        for u, v in base_edges:
+            G.add_edge(u, v, length=10.0, speed=5.0, capacity=10)
+
+        # Randomly make some cycle edges bidirectional to add variety
+        try:
+            rng = np.random.RandomState(None)
+            for u, v in base_edges:
+                if rng.random() < 0.5 and not G.has_edge(v, u):
+                    G.add_edge(v, u, length=G[u][v]['length'], speed=G[u][v]['speed'], capacity=G[u][v]['capacity'])
+        except Exception:
+            # Fallback: keep cycle only (still strongly connected)
+            pass
+
         return G
     
-    def create_random_2d_network(self, num_nodes=10, bidirectional_prob=0.3, 
+    def create_random_2d_network(self, num_nodes=10, bidirectional_prob=0.85,
                                  speed_mean=5.0, capacity_mean=10.0, 
                                  coord_mean=0.0, coord_std=10.0, seed=None):
         """
@@ -278,7 +290,7 @@ class parallel_env(ParallelEnv):
         
         # Generate random 2D coordinates from Gaussian distribution
         coords = rng.normal(loc=coord_mean, scale=coord_std, size=(num_nodes, 2))
-        
+
         # Compute Delaunay triangulation
         tri = Delaunay(coords)
         
@@ -327,7 +339,43 @@ class parallel_env(ParallelEnv):
                     G.add_edge(u, v, length=length, speed=speed, capacity=capacity)
                 else:
                     G.add_edge(v, u, length=length, speed=speed, capacity=capacity)
-        
+
+            # Ensure strong connectivity: if not strongly connected, connect SCCs in a directed cycle
+            if not nx.is_strongly_connected(G):
+                sccs = list(nx.strongly_connected_components(G))
+                # Choose one representative node from each SCC
+                reps = [min(scc) for scc in sccs]
+
+                # Create bridging edges between consecutive SCC representatives
+                for i in range(len(reps)):
+                    a = reps[i]
+                    b = reps[(i + 1) % len(reps)]
+                    if not G.has_edge(a, b):
+                        # compute length between a and b (fallback to euclidean distance)
+                        dx = coords[b, 0] - coords[a, 0]
+                        dy = coords[b, 1] - coords[a, 1]
+                        length = float(np.sqrt(dx ** 2 + dy ** 2))
+                        speed = float(rng.exponential(scale=speed_mean))
+                        capacity = float(rng.exponential(scale=capacity_mean))
+                        speed = max(speed, 0.1)
+                        capacity = max(capacity, 1.0)
+                        G.add_edge(a, b, length=length, speed=speed, capacity=capacity)
+                # After adding a cycle among SCCs the graph should be strongly connected.
+                # As a safety, if still not strongly connected (very unlikely), add reverse edges
+                if not nx.is_strongly_connected(G):
+                    # add reverse edges for any isolated directions until connected
+                    for u, v in list(G.edges()):
+                        if not G.has_edge(v, u):
+                            data = G[u][v]
+                            G.add_edge(
+                                v, u,
+                                length=data.get('length', 1.0),
+                                speed=data.get('speed', 1.0),
+                                capacity=data.get('capacity', 1.0),
+                            )
+                        if nx.is_strongly_connected(G):
+                            break
+
         return G
     
     def initialize_random_positions(self, seed=None):

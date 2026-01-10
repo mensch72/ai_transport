@@ -10,6 +10,104 @@ import networkx as nx
 from typing import Dict, Any, Optional, Tuple
 
 
+def apply_empty_vehicle_waiting(
+    is_empty: bool,
+    depart_count: int,
+    wait_cycles: int,
+    action_space_size: int
+) -> Tuple[Optional[int], int, Optional[str]]:
+    """
+    Apply waiting mechanism for empty vehicles.
+
+    When vehicle is empty and hasn't waited enough cycles,
+    return wait action. Otherwise allow normal action selection.
+
+    Args:
+        is_empty: Whether vehicle is currently empty
+        depart_count: Current waiting cycle counter
+        wait_cycles: Total cycles to wait (0 = no waiting)
+        action_space_size: Size of action space (for validation)
+
+    Returns:
+        Tuple of (wait_action, updated_depart_count, wait_message)
+        - wait_action: 0 (pass) if should wait, None if should proceed
+        - updated_depart_count: New counter value
+        - wait_message: Justification string, or None if not waiting
+    """
+    if wait_cycles <= 0:
+        return None, depart_count, None
+
+    if not is_empty:
+        return None, 0, None
+
+    if depart_count < wait_cycles:
+        new_count = depart_count + 1
+        message = f"Waiting at node (count {new_count}/{wait_cycles})"
+        return 0, new_count, message
+
+    return None, wait_cycles, None
+
+# python
+def apply_random_edge_noise(
+    current_node: int,
+    next_node_on_shortest_path: Optional[int],
+    action_mapping: Dict[str, Any],
+    action_space_size: int,
+    random_edge_prob: float,
+    rng: np.random.RandomState
+) -> Tuple[Optional[int], Optional[str]]:
+    """
+    Apply random edge selection noise to departing action.
+
+    With probability random_edge_prob, choose a random outgoing edge
+    instead of the shortest path edge. Otherwise use shortest path.
+
+    Args:
+        current_node: Current node ID
+        next_node_on_shortest_path: Next node on shortest path (None = at destination)
+        action_mapping: Action mapping dict with 'details' key
+        action_space_size: Size of action space
+        random_edge_prob: Probability of choosing random edge (0.0 to 1.0)
+        rng: Random number generator instance
+
+    Returns:
+        Tuple of (action_idx, justification_message)
+        - action_idx: Action to take, or None if should use shortest path
+        - justification_message: Explanation string, or None
+    """
+    if random_edge_prob <= 0:
+        # No noise, use shortest path
+        return None, None
+
+    if rng.random() >= random_edge_prob:
+        # Use shortest path (within probability)
+        return None, None
+
+    # Select random outgoing edge
+    details = action_mapping.get('details', {})
+    outgoing_edges = []
+    edge_actions = []
+
+    for action_idx in range(1, action_space_size):
+        edge = details.get(action_idx)
+        if edge and isinstance(edge, tuple) and edge[0] == current_node:
+            outgoing_edges.append(edge)
+            edge_actions.append(action_idx)
+
+    if not outgoing_edges:
+        # No outgoing edges available
+        return None, None
+
+    # Choose random outgoing edge
+    random_idx = rng.randint(0, len(outgoing_edges))
+    chosen_edge = outgoing_edges[random_idx]
+    chosen_action = edge_actions[random_idx]
+
+    message = f"Taking random outgoing edge {chosen_edge} instead of shortest path"
+    return chosen_action, message
+
+
+
 class VehiclePolicy(ABC):
     """Abstract base class for vehicle agent policies."""
     
@@ -56,6 +154,7 @@ class RandomVehiclePolicy(VehiclePolicy):
         agent_id: str,
         pass_prob_routing: float = 0.3,
         pass_prob_departing: float = 0.2,
+        wait_cycles: int = 0,
         seed: Optional[int] = None
     ):
         """
@@ -70,7 +169,7 @@ class RandomVehiclePolicy(VehiclePolicy):
         super().__init__(agent_id, seed)
         self.pass_prob_routing = pass_prob_routing
         self.pass_prob_departing = pass_prob_departing
-    
+
     def get_action(self, observation: Dict[str, Any], action_space_size: int):
         """
         Get random action with step-type-specific passing probability.
@@ -83,7 +182,7 @@ class RandomVehiclePolicy(VehiclePolicy):
             Tuple of (action_index, justification_string)
         """
         step_type = observation.get('step_type', 'departing')
-        
+
         # Determine pass probability based on step type
         if step_type == 'routing':
             pass_prob = self.pass_prob_routing
@@ -143,6 +242,8 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
         self,
         agent_id: str,
         network,
+        wait_cycles: int = 0,
+        random_edge_prob: float = 0.0,
         seed: Optional[int] = None
     ):
         """
@@ -155,6 +256,9 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
         """
         super().__init__(agent_id, seed)
         self.network = network
+        self.wait_cycles = wait_cycles
+        self.random_edge_prob = random_edge_prob
+        self.depart_count = 0
         self.current_destination = None
         self.nodes = list(network.nodes())
         
@@ -291,25 +395,50 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
         """Choose edge on shortest path to destination."""
         my_position = observation.get('my_position')
         action_mapping = observation.get('action_mapping', {})
-        
+        is_empty = observation.get('is_empty', True)
+
         # If on edge, must pass
         if isinstance(my_position, tuple):
             return 0, "Passing (already on edge)"
         
         current_node = my_position
-        
-        # If no destination, pass
+
+        # 应用等待机制
+        wait_action, self.depart_count, wait_message = apply_empty_vehicle_waiting(
+            is_empty=is_empty,
+            depart_count=self.depart_count,
+            wait_cycles=self.wait_cycles,
+            action_space_size=action_space_size
+        )
+        if wait_action is not None:
+            return wait_action, wait_message
+
+        # 如果没有等待，继续原逻辑
         if self.current_destination is None:
+            self.depart_count = 0  # 重置计数器
             return 0, "Passing (no destination set)"
         
         # Get next node on shortest path
         next_node = self._get_next_node_on_path(current_node, self.current_destination)
         if next_node is None:
+            self.depart_count = 0
             if current_node == self.current_destination:
                 return 0, f"Passing (already at destination {self.current_destination})"
             else:
                 return 0, f"Passing (no path to destination {self.current_destination})"
-        
+
+        # 应用随机边噪声
+        noise_action, noise_message = apply_random_edge_noise(
+            current_node=current_node,
+            next_node_on_shortest_path=next_node,
+            action_mapping=action_mapping,
+            action_space_size=action_space_size,
+            random_edge_prob=self.random_edge_prob,
+            rng=self.rng
+        )
+        if noise_action is not None:
+            return noise_action, noise_message
+
         # Find action corresponding to edge (current_node, next_node)
         details = action_mapping.get('details', {})
         for action_idx in range(1, action_space_size):
