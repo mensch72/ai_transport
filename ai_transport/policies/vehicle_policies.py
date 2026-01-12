@@ -366,7 +366,7 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
     
     def _get_routing_action(self, observation: Dict, action_space_size: int):
         """Set or update destination."""
-        my_position = observation.get('my_position')
+        my_position = observation.get('agent_positions', {}).get(self.agent_id)
         action_mapping = observation.get('action_mapping', {})
         
         # If on edge, can't act
@@ -393,9 +393,10 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
     
     def _get_departing_action(self, observation: Dict, action_space_size: int):
         """Choose edge on shortest path to destination."""
-        my_position = observation.get('my_position')
+        my_position = observation.get('agent_positions', {}).get(self.agent_id)
         action_mapping = observation.get('action_mapping', {})
-        is_empty = observation.get('is_empty', True)
+        human_aboard = observation.get('human_aboard', {})
+        is_empty = all(v != self.agent_id for v in human_aboard.values())
 
         # If on edge, must pass
         if isinstance(my_position, tuple):

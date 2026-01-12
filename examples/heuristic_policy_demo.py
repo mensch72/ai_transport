@@ -200,8 +200,6 @@ def main():
     
     for cycle in range(80):  # More cycles for complex scenario
         current_step = env.step_type
-
-
         # Get actions from policies
         actions = {}
         for agent in env.agents:
