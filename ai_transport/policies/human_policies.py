@@ -330,9 +330,10 @@ class TargetDestinationHumanPolicy(HumanPolicy):
         
         # Check if target should change based on time elapsed
         time_elapsed = real_time - self.last_real_time
-        change_prob = 1.0 - np.exp(-self.target_change_rate * time_elapsed)
-        
-        if self.rng.random() < change_prob:
+        change_prob =1.0 - np.exp(-self.target_change_rate * time_elapsed)
+
+        if (self.rng.random() < change_prob):
+
             # Change to new random target
             self.target = self.rng.choice(self.nodes)
             self.last_real_time = real_time
@@ -358,24 +359,55 @@ class TargetDestinationHumanPolicy(HumanPolicy):
         
         # Update target destination
         self._update_target(real_time)
-        
-        if step_type == 'boarding':
+
+        if step_type == 'unboarding':
+            return self._get_unboarding_action(observation, action_mapping, action_space_size)
+        elif step_type == 'boarding':
             return self._get_boarding_action(observation, action_mapping, action_space_size)
         elif step_type == 'departing':
             return self._get_departing_action(observation, action_mapping, action_space_size)
         else:
-            # Routing, unboarding, or on edge - pass
+            # Routing or on edge - pass
             if step_type == 'routing':
                 return 0, "Passing (no action in routing step)"
-            elif step_type == 'unboarding':
-                return 0, "Passing (not aboard vehicle)"
             else:
                 return 0, "Passing"
-    
+
+    def _get_unboarding_action(self, observation: Dict, action_mapping: Dict, action_space_size: int):
+
+        if action_space_size <= 1:
+            return 0, "Passing (no unboard option)"
+
+        pos = observation.get("agent_positions", {}).get(self.agent_id)
+        if isinstance(pos, tuple):
+            return 0, "Passing (on edge)"
+
+        current_node = pos if pos is not None else None
+        if current_node is None:
+            return 0, "Passing (position unknown)"
+
+        # 检查是否在车上
+        human_aboard = observation.get('human_aboard', {})
+        if not human_aboard.get(self.agent_id):
+            return 0, "Passing (not aboard)"
+
+        # 到达目标就下车（self.target 是这个 policy 的目标）
+        print('TargetDestinationHumanPolicy unboarding check: agent_id=', self.agent_id, ' current_node=', current_node,
+              ', target=', self.target,)
+        if self.target is not None and current_node == self.target:
+            return 1, f"Unboarding (arrived at target {self.target})"
+
+        return 0, f"Staying aboard (not at target {self.target})"
+
     def _get_boarding_action(self, observation: Dict, action_mapping: Dict, action_space_size: int):
         """Choose vehicle whose destination is closest to target."""
         if action_space_size <= 1 or self.target is None:
             return 0, "Passing (no target or no vehicles available)"
+
+        agent_positions = observation.get('agent_positions', {})
+        my_pos = agent_positions.get(self.agent_id)
+        if not isinstance(my_pos, tuple) and self.target is not None and my_pos == self.target:
+            return 0, f"Passing (already at target {self.target})"
         
         # Get vehicle destinations from observation
         vehicle_destinations = observation.get('vehicle_destinations', {})
@@ -400,18 +432,21 @@ class TargetDestinationHumanPolicy(HumanPolicy):
             return best_action, f"Boarding {best_vehicle} (heading toward target {self.target}, distance {best_distance:.1f})"
         else:
             return 0, f"Passing (no vehicles heading toward target {self.target})"
-    
+
     def _get_departing_action(self, observation: Dict, action_mapping: Dict, action_space_size: int):
         """Choose edge leading toward target destination."""
         if action_space_size <= 1 or self.target is None:
             return 0, "Passing (no target or no edges available)"
         
-        my_position = observation.get('my_position')
+        my_position = observation.get("agent_positions", {}).get(self.agent_id)#observation.get('my_position')
         if isinstance(my_position, tuple):
             return 0, "Passing (already on edge)"
         
         # Get current node
         current_node = my_position
+        print('TargetDestinationHumanPolicy unboarding check: agent_id=', self.agent_id, ' current_node=', current_node,
+              ', target=', self.target,'my_position=',my_position)
+
         if current_node == self.target:
             return 0, f"Passing (already at target {self.target})"
         
@@ -436,7 +471,7 @@ class TargetDestinationHumanPolicy(HumanPolicy):
             return best_action, f"Walking toward target {self.target} via edge {best_edge}"
         else:
             return 0, f"Passing (no edge toward target {self.target})"
-    
+
     def reset(self):
         """Reset policy state (target destination and time)."""
         self.target = None
@@ -782,7 +817,7 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
         if best_vehicle_action is None:
             return 0, "Passing (no suitable vehicle found)"
             # 应用坐错车误差
-            final_action, wrong_msg = apply_wrong_vehicle_boarding(
+        final_action, wrong_msg = apply_wrong_vehicle_boarding(
                 available_vehicles=available_vehicles,
                 best_vehicle_action=best_vehicle_action,
                 best_vehicle_id=best_vehicle_id,
@@ -790,12 +825,10 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
                 rng=self.rng
             )
 
-            if wrong_msg:
-                self.planned_exit_node = best_z  # 仍然记录原计划的下车站
-                return final_action, wrong_msg
-
-            self.planned_exit_node = best_z
-            return best_vehicle_action, f"Boarding {best_vehicle_id} to reach node {best_z} (closer to target, ETA {best_time_to_z:.1f})"
+        self.planned_exit_node = best_z# 仍然记录原计划的下车站
+        if wrong_msg:
+            return final_action, wrong_msg
+        return best_vehicle_action, f"Boarding {best_vehicle_id} to reach node {best_z} (closer to target, ETA {best_time_to_z:.1f})"
 
     def _get_departing_action(self, observation: Dict, action_space_size: int) -> Tuple[int, str]:
         """

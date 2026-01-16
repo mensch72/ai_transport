@@ -602,7 +602,9 @@ class parallel_env(ParallelEnv):
                     print(f"    destination: {dest}")
                 elif agent in self.human_agents:
                     aboard = self.human_aboard[agent]
+                    dest = self.human_destinations.get(agent)
                     print(f"    aboard: {aboard}")
+                    print(f"    target: {dest}")
         else:
             print("Environment terminated")
     
@@ -1347,10 +1349,12 @@ class parallel_env(ParallelEnv):
             'agent_positions': dict(self.agent_positions),
             'vehicle_destinations': dict(self.vehicle_destinations),
             'human_aboard': dict(self.human_aboard),
+            'human_destinations': dict(self.human_destinations),
             'agent_attributes': dict(self.agent_attributes),
             'network_nodes': self._cached_network_nodes,
             'network_edges': self._cached_network_edges,
-            'action_mapping': self._get_action_mapping(agent)
+            'action_mapping': self._get_action_mapping(agent),
+            'my_position': self.agent_positions[agent],
         }
         return obs
     
@@ -1403,6 +1407,7 @@ class parallel_env(ParallelEnv):
                 agent_info['destination'] = self.vehicle_destinations[other_agent]
             elif other_agent in self.human_agents:
                 agent_info['aboard'] = self.human_aboard[other_agent]
+                agent_info['destination'] = self.human_destinations.get(other_agent)
             
             obs['agents_here'][other_agent] = agent_info
         
@@ -1480,6 +1485,7 @@ class parallel_env(ParallelEnv):
         elif self.step_type == 'unboarding':
             if agent in self.human_agents:
                 aboard = self.human_aboard.get(agent)
+
                 if aboard is not None:
                     vehicle_pos = self.agent_positions.get(aboard)
                     if vehicle_pos is not None and not isinstance(vehicle_pos, tuple):
@@ -1488,6 +1494,7 @@ class parallel_env(ParallelEnv):
                         mapping['details'][0] = None
                         mapping['description'][1] = 'unboard'
                         mapping['details'][1] = aboard  # Include vehicle ID being unboarded from
+
                         return mapping
             # All other agents can only pass
             mapping['description'][0] = 'pass'
@@ -1630,7 +1637,6 @@ class parallel_env(ParallelEnv):
         for agent, action in actions.items():
             if agent in self.vehicle_agents:
                 pos = self.agent_positions.get(agent)
-                # Only vehicles at nodes can route
                 if pos is not None and not isinstance(pos, tuple):
                     if action == 0:
                         # Set destination to None

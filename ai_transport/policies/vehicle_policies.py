@@ -283,8 +283,29 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
         x1, y1 = self.node_coords.get(node1, (0, 0))
         x2, y2 = self.node_coords.get(node2, (0, 0))
         return np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
-    
-    def _choose_new_destination(self, current_node) -> Optional[int]:
+
+    def _travel_time(self, src, dst):
+        if src == dst:
+            return 0.0
+        try:
+            return nx.shortest_path_length(self.time_graph, src, dst, weight='weight')
+        except nx.NetworkXNoPath:
+            return float('inf')
+
+    def _choose_service_destination(self, current_node, aboard_humans, human_destinations):
+        best_dest = None
+        best_time = -1.0
+        for h in aboard_humans:
+            d = human_destinations.get(h)
+            if d is None:
+                continue
+            dist = self._euclidean_distance(current_node, d)
+            if np.isfinite(dist) and dist > best_time:
+                best_time = dist
+                best_dest = d
+        return best_dest
+
+    def _choose_cruise_destination(self, current_node) -> Optional[int]:
         """
         Choose new destination with probability proportional to distance.
         
@@ -298,7 +319,7 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
         other_nodes = [n for n in self.nodes if n != current_node]
         if not other_nodes:
             return None
-        
+
         # Compute distances
         distances = np.array([self._euclidean_distance(current_node, n) for n in other_nodes])
         
@@ -374,11 +395,26 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
             return 0, "Passing (on edge)"
         
         current_node = my_position
-        
+
+        human_aboard = observation.get("human_aboard", {})
+        human_destinations = observation.get("human_destinations", {})
+        aboard_humans = [h for h, v in human_aboard.items() if v == self.agent_id]
+
+
         # Check if we've reached current destination
         if self.current_destination is None or current_node == self.current_destination:
             # Choose new destination
-            self.current_destination = self._choose_new_destination(current_node)
+            if aboard_humans:
+                self.current_destination = self._choose_service_destination(
+                    current_node=current_node,
+                    aboard_humans=aboard_humans,
+                    human_destinations=human_destinations
+                )
+                if self.current_destination is None:
+                    # 如果乘客目的地缺失，退化为不动或巡游（看你偏好）
+                    return 0, "Passing (passengers aboard but destinations unknown)"
+            else:
+                self.current_destination = self._choose_cruise_destination(current_node)
         
         # Find action that sets destination to our target
         if self.current_destination is not None:
@@ -393,16 +429,35 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
     
     def _get_departing_action(self, observation: Dict, action_space_size: int):
         """Choose edge on shortest path to destination."""
-        my_position = observation.get('agent_positions', {}).get(self.agent_id)
+        agent_positions = observation.get("agent_positions", {})
         action_mapping = observation.get('action_mapping', {})
         human_aboard = observation.get('human_aboard', {})
         is_empty = all(v != self.agent_id for v in human_aboard.values())
 
         # If on edge, must pass
+        my_position = observation.get('agent_positions', {}).get(self.agent_id)
         if isinstance(my_position, tuple):
             return 0, "Passing (already on edge)"
         
         current_node = my_position
+
+        #本站点有人等车就先别走（给 boarding step 机会）
+        if is_empty:
+            waiting_humans = [h for h, v in human_aboard.items() if v is None]
+            humans_here = []
+            for h in waiting_humans:
+                pos = agent_positions.get(h)
+                # 人在边上：pos 形如 ((u,v), progress) 或 (u,v) —— 都不算“在站点等车”
+                if isinstance(pos, tuple):
+                    continue
+                # numpy -> python int
+                if hasattr(pos, "item"):
+                    pos = pos.item()
+                if pos == current_node:
+                    humans_here.append(h)
+            if humans_here:
+                self.depart_count = 0
+                return 0, f"Waiting for boarding at node {current_node}: {humans_here}"
 
         # 应用等待机制
         wait_action, self.depart_count, wait_message = apply_empty_vehicle_waiting(

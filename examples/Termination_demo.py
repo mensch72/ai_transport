@@ -51,10 +51,10 @@ def main():
     human_dests = rng.choice(candidate_nodes, size=len(human_agents), replace=False)
     human_dest_map = dict(zip(human_agents, map(int, human_dests)))
 
-    human_wait = 0.3
-    human_target_change_rate = 0.3
+    human_wait = 0.7
+    human_target_change_rate = 0
     vehicle_wait_cycles = 2
-    target_policy_fraction = 0.33
+    target_policy_fraction = 0.1
 
     policies = {}
     for agent in env.agents:
@@ -62,7 +62,6 @@ def main():
         if agent in env.human_agents:
             dest = human_dest_map[agent]
             env.human_aboard[agent] = None
-            env.human_destinations[agent] = dest
             if rng.random() < target_policy_fraction:
                 policies[agent] = TargetDestinationHumanPolicy(
                     agent_id=agent,
@@ -71,6 +70,7 @@ def main():
                     seed=seed
                 )
             else:
+                env.human_destinations[agent] = dest
                 policies[agent] = HeuristicRoutingHumanPolicy(
                     agent_id=agent,
                     network=G,
@@ -87,10 +87,28 @@ def main():
             )
     print("\n   Agent targets:")
     for agent in sorted(env.agents):
-        dest = env.human_destinations.get(agent) or env.vehicle_destinations.get(agent)
-        agent_type = "human" if agent in env.human_agents else "vehicle"
-        print(f"   - {agent}: {agent_type} → {dest}")
-
+        policy = policies.get(agent)
+        policy_name = policy.__class__.__name__ if policy is not None else "None"
+        if agent in env.human_agents:
+            env_dest = env.human_destinations.get(agent)
+            agent_type = "human"
+            if isinstance(policy, TargetDestinationHumanPolicy):
+                policy_dest = policy.target
+            elif isinstance(policy, HeuristicRoutingHumanPolicy):
+                policy_dest = policy.target_nodes
+            else:
+                policy_dest = None
+        else:
+            env_dest = env.vehicle_destinations.get(agent)
+            agent_type = "vehicle"
+            # 策略内部真正使用的目标
+            if isinstance(policy, ShortestPathVehiclePolicy):
+                policy_dest = policy.current_destination
+            else:
+                policy_dest = None
+        if hasattr(env_dest, "item"):
+            env_dest = env_dest.item()
+        print(f"   - {agent}: {agent_type} | "f"env_dest={env_dest} | "f"policy_dest={policy_dest} | "f"policy={policy_name}")
 
     # 3) Run simulation
     print("\n3. Running complex simulation...")
@@ -109,7 +127,7 @@ def main():
     walking_events = []
     frame_counter = 0
 
-    for cycle in range(80):  # More cycles for complex scenario
+    for cycle in range(65):  # More cycles for complex scenario
         current_step = env.step_type
         # Get actions from policies
         actions = {}
@@ -155,10 +173,12 @@ def main():
 
         # --- DEBUG: show how terminate becomes True ---
         should_end = any(terms.values())
+        print("\n--- Termination Check Debug ---",terms)
+
 
         # 只在接近结束或已经结束时打印（避免刷屏）
         # 你也可以改成每 N 步打印一次
-        if should_end or (cycle % 20 == 0 and env.step_type == 'routing'):
+        if should_end or (cycle % 10 == 0 and env.step_type == 'routing'):
             has_active_dest = False
             all_reached = True
             print(f"  cycle={cycle} | env.step_type(after step)={env.step_type} | terminated={should_end}")
@@ -190,20 +210,24 @@ def main():
             frame_counter += 1
 
         # Progress report
-        if (cycle + 1) % 20 == 0:
-            print(f"\n   Progress: Cycle {cycle + 1}/80")
+        if (cycle + 1) % 10 == 0:
+            print(f"\n   Progress: Cycle {cycle + 1}/120")
             for agent_id in env.human_agents:
                 pos = env.agent_positions.get(agent_id)
                 aboard = env.human_aboard.get(agent_id)
                 policy = policies[agent_id]
-                if hasattr(policy, "target_nodes"):
+                if isinstance(policy, TargetDestinationHumanPolicy):
+                    target = policy.target
+                elif isinstance(policy, HeuristicRoutingHumanPolicy):
                     target = policy.target_nodes
-                else:
-                    # TargetDestinationHumanPolicy 没有 target_nodes，那就用 env 里存的目的地
-                    target = {env.human_destinations.get(agent_id)}
                 pos_str = str(pos) if not isinstance(pos, tuple) else f"edge {pos[0]}"
                 aboard_str = f" (aboard {aboard})" if aboard else ""
-                at_target = "✓ TARGET" if pos in target else ""
+                at_target = "✓ TARGET" if (
+                        not isinstance(pos, tuple)
+                        and (pos == target
+                            if isinstance(target, (int, np.integer))
+                            else pos in target)
+                             ) else ""
                 print(f"      {agent_id}: {pos_str}{aboard_str} -> {target} {at_target}")
 
     # Save video
