@@ -392,8 +392,7 @@ class TargetDestinationHumanPolicy(HumanPolicy):
             return 0, "Passing (not aboard)"
 
         # 到达目标就下车（self.target 是这个 policy 的目标）
-        print('TargetDestinationHumanPolicy unboarding check: agent_id=', self.agent_id, ' current_node=', current_node,
-              ', target=', self.target,)
+        #print('TargetDestinationHumanPolicy unboarding check: agent_id=', self.agent_id, ' current_node=', current_node,', target=', self.target,)
         if self.target is not None and current_node == self.target:
             return 1, f"Unboarding (arrived at target {self.target})"
 
@@ -444,8 +443,7 @@ class TargetDestinationHumanPolicy(HumanPolicy):
         
         # Get current node
         current_node = my_position
-        print('TargetDestinationHumanPolicy unboarding check: agent_id=', self.agent_id, ' current_node=', current_node,
-              ', target=', self.target,'my_position=',my_position)
+        #print('TargetDestinationHumanPolicy unboarding check: agent_id=', self.agent_id, ' current_node=', current_node,', target=', self.target,'my_position=',my_position)
 
         if current_node == self.target:
             return 0, f"Passing (already at target {self.target})"
@@ -496,6 +494,7 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
         self,
         agent_id: str,
         network,
+        # Todo:target_nodes to node?
         target_nodes: Set[int],
         p_wait: float = 0.5,
         wrong_vehicle_prob: float = 0.0,

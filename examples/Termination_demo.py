@@ -1,7 +1,6 @@
 # python
 """
 Termination_demo.py
-
 This script builds simple synthetic observations and prints policy decisions.
 """
 import sys
@@ -127,7 +126,26 @@ def main():
     walking_events = []
     frame_counter = 0
 
-    for cycle in range(65):  # More cycles for complex scenario
+    for agent, policy in policies.items():
+        if agent in env.human_agents:
+            # TargetDestinationHumanPolicy: policy.target (single node)
+            if hasattr(policy, "target"):
+                env.human_destinations[agent] = policy.target
+
+            # HeuristicRoutingHumanPolicy: policy.target_nodes (set of nodes)
+            elif hasattr(policy, "target_nodes"):
+                env.human_destinations[agent] = set(policy.target_nodes)
+
+        elif agent in env.vehicle_agents:
+            # ShortestPathVehiclePolicy: policy.current_destination
+            if hasattr(policy, "current_destination"):
+                env.vehicle_destinations[agent] = policy.current_destination
+
+    env.termination_mode = "current_active"
+    env.freeze_termination_participants()
+    print("FROZEN termination_participants =", env.termination_participants)
+
+    for cycle in range(120):  # More cycles for complex scenario
         current_step = env.step_type
         # Get actions from policies
         actions = {}
@@ -171,36 +189,13 @@ def main():
         # Step environment
         obs, rewards, terms, truncs, infos = env.step(actions)
 
-        # --- DEBUG: show how terminate becomes True ---
-        should_end = any(terms.values())
-        print("\n--- Termination Check Debug ---",terms)
 
 
-        # 只在接近结束或已经结束时打印（避免刷屏）
-        # 你也可以改成每 N 步打印一次
-        if should_end or (cycle % 10 == 0 and env.step_type == 'routing'):
-            has_active_dest = False
-            all_reached = True
-            print(f"  cycle={cycle} | env.step_type(after step)={env.step_type} | terminated={should_end}")
-            for a in sorted(env.agents):
-                if a in env.human_agents:
-                    dest = env.human_destinations.get(a)
-                else:
-                    dest = env.vehicle_destinations.get(a)
-                pos = env.agent_positions.get(a)
-                if dest is not None:
-                    has_active_dest = True
-                on_edge = isinstance(pos, tuple)
-                reached = (dest is not None) and (not on_edge) and (pos == dest)
-                if dest is not None and not reached:
-                    all_reached = False
-                who = "human" if a in env.human_agents else "vehicle"
-                pos_str = f"edge{pos}" if on_edge else str(pos)
-                print(f"  - {a:10s} ({who}) pos={pos_str:>10s} dest={dest} reached={reached}")
-            print(f"  => has_active_dest={has_active_dest} | all_reached={all_reached} | terminate() would return {has_active_dest and all_reached}")
-        # --- END DEBUG ---
+        active = [v for v in terms.values() if v is not None]
+        should_term=(len(active) > 0) and all(active)
 
-        if any(terms.values()) or any(truncs.values()):
+
+        if should_term:
             print(f"Episode ended at cycle {cycle}")
             break
 
@@ -212,6 +207,7 @@ def main():
         # Progress report
         if (cycle + 1) % 10 == 0:
             print(f"\n   Progress: Cycle {cycle + 1}/120")
+            print('should end',terms)
             for agent_id in env.human_agents:
                 pos = env.agent_positions.get(agent_id)
                 aboard = env.human_aboard.get(agent_id)
@@ -228,7 +224,7 @@ def main():
                             if isinstance(target, (int, np.integer))
                             else pos in target)
                              ) else ""
-                print(f"      {agent_id}: {pos_str}{aboard_str} -> {target} {at_target}")
+                print(f"  {agent_id}: {pos_str}{aboard_str} -> {target} {at_target}")
 
     # Save video
     env.save_video('Termination_demo.mp4', fps=5)

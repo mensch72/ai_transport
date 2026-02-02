@@ -299,7 +299,20 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
             d = human_destinations.get(h)
             if d is None:
                 continue
-            dist = self._euclidean_distance(current_node, d)
+            #choose a best destination if multiple are given
+            if isinstance(d, (set, list, tuple)):
+                best_d_for_h = None
+                best_dist_for_h = -1.0
+                for cand in d:
+                    dist_cand = self._euclidean_distance(current_node, cand)
+                    # choose the farthest one
+                    if np.isfinite(dist_cand) and dist_cand > best_dist_for_h:
+                        best_dist_for_h = dist_cand
+                        best_d_for_h = cand
+                d = best_d_for_h
+                dist = best_dist_for_h
+            else:
+                dist = self._euclidean_distance(current_node, d)
             if np.isfinite(dist) and dist > best_time:
                 best_time = dist
                 best_dest = d

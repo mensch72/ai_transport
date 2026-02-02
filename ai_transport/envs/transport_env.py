@@ -83,6 +83,8 @@ class parallel_env(ParallelEnv):
         vehicle_capacities=None,
         vehicle_fuel_uses=None,
         observation_scenario='full'
+
+
     ):
         """
         The init method takes in environment arguments and should define the following attributes:
@@ -204,7 +206,13 @@ class parallel_env(ParallelEnv):
         self.vehicle_destinations = None
         self.human_aboard = None  # For each human: None or vehicle ID
         self._step_type = None  # One of: 'routing', 'unboarding', 'boarding', 'departing' (private, use step_type property)
-        
+
+        # Termination modes:
+        # "initial_active" : only agents whose destination is NOT None at episode start participate in termination (participants are frozen once)
+        # "current_active" : agents with a non-None destination at the current timestep participate dynamically in termination
+        # "all_agents"     : all agents participate in termination (episode ends only when every agent is not on an edge and has reached its destination; usually not recommended)
+        self.termination_mode = "initial_active"
+
         # Cached network observation data (constant throughout episode)
         self._cached_network_nodes = None
         self._cached_network_edges = None
@@ -1309,6 +1317,8 @@ class parallel_env(ParallelEnv):
         # Initialize vehicle destinations - all start with None
         self.vehicle_destinations = {agent: None for agent in self.vehicle_agents}
         self.human_destinations = {agent: None for agent in self.human_agents}
+        # clear termination participants for new episode (will be frozen lazily later)
+        self.termination_participants = None
 
         # Initialize step type - start with routing
         self._step_type = 'routing'
@@ -1551,31 +1561,98 @@ class parallel_env(ParallelEnv):
         mapping['description'][0] = 'pass'
         return mapping
 
-    def terminate(self):
-        """
-        Check if the episode should terminate.
-        Returns True if all agents with an assigned destination have reached it.
-        """
-        has_active_dest = False
-        all_reached = True
 
+    #  Termination logic
+    def freeze_termination_participants(self):
+        """Freeze termination participants NOW based on current env destinations."""
+        participants = set()
         for agent in self.agents:
-            dest = None
             if agent in self.vehicle_agents:
                 dest = self.vehicle_destinations.get(agent)
             elif agent in self.human_agents:
                 dest = self.human_destinations.get(agent)
+            else:
+                dest = None
 
             if dest is not None:
-                has_active_dest = True
-                pos = self.agent_positions.get(agent)
-                # Must be at the specific node (not on an edge) matching destination
-                if isinstance(pos, tuple) or pos != dest:
-                    all_reached = False
-                    break
+                participants.add(agent)
 
-        # Terminate only if there was at least one active task and all tasks are complete
-        return has_active_dest and all_reached
+        self.termination_participants = participants
+
+    def termination_status(self):
+        """
+        Per-agent status dict: agent -> True/False/None
+          None  : not participating (dest was None at episode start)
+          False : participating but not reached yet (includes being on edge, or dest missing)
+          True  : participating and reached
+        """
+        mode = getattr(self, "termination_mode", "initial_active")
+
+        if mode == "initial_active":
+            participants = self.termination_participants or set()
+
+        elif mode == "current_active":
+            #whose dest != None currently
+            participants = set()
+            for agent in self.agents:
+                if agent in self.vehicle_agents:
+                    dest = self.vehicle_destinations.get(agent)
+                elif agent in self.human_agents:
+                    dest = self.human_destinations.get(agent)
+                else:
+                    dest = None
+                if dest is not None:
+                    participants.add(agent)
+
+        elif mode == "all_agents":
+            participants = set(self.agents)
+
+        else:
+            raise ValueError(f"Unknown termination_mode: {mode}")
+
+
+
+        status = {}
+        for agent in self.agents:
+            if agent not in participants:
+                status[agent] = None
+                continue
+
+            # current dest (may change), but participant still must reach a dest
+            if agent in self.vehicle_agents:
+                dest = self.vehicle_destinations.get(agent)
+            elif agent in self.human_agents:
+                dest = self.human_destinations.get(agent)
+            else:
+                dest = None
+
+            if dest is None:
+                status[agent] = False
+                continue
+
+            pos = self.agent_positions.get(agent)
+            if hasattr(pos, "item") and not isinstance(pos, tuple):
+                pos = pos.item()
+
+            # on edge => not reached
+            if isinstance(pos, tuple):
+                status[agent] = False
+                continue
+
+            # normalize dest to set
+            if isinstance(dest, set):
+                dest_set = dest
+            elif isinstance(dest, (list, tuple)):
+                dest_set = set(dest)
+            else:
+                if hasattr(dest, "item"):
+                    dest = dest.item()
+                dest_set = {dest}
+
+            status[agent] = (pos in dest_set)
+
+        return status
+
 
 
     def step(self, actions):
@@ -1616,8 +1693,8 @@ class parallel_env(ParallelEnv):
         rewards = {agent: 0.0 for agent in self.agents}
 
         # Check termination condition
-        should_terminate = self.terminate()
-        terminations = {agent: should_terminate for agent in self.agents}
+        terminations = self.termination_status()
+        print("STEP_TYPE", self.step_type, "terminate?", terminations)
 
         truncations = {agent: False for agent in self.agents}
         infos = {agent: {} for agent in self.agents}
@@ -1626,7 +1703,7 @@ class parallel_env(ParallelEnv):
         # When recording, we want explicit control over when to capture frames
         if self.render_mode == "human" and not getattr(self, '_recording', False):
             self.render()
-            
+
         return observations, rewards, terminations, truncations, infos
     
     def _process_routing_actions(self, actions):
