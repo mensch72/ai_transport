@@ -18,9 +18,7 @@ def apply_empty_vehicle_waiting(
 ) -> Tuple[Optional[int], int, Optional[str]]:
     """
     Apply waiting mechanism for empty vehicles.
-
-    When vehicle is empty and hasn't waited enough cycles,
-    return wait action. Otherwise allow normal action selection.
+    When vehicle is empty and hasn't waited enough cycles,return wait action. Otherwise allow normal action selection.
 
     Args:
         is_empty: Whether vehicle is currently empty
@@ -34,6 +32,7 @@ def apply_empty_vehicle_waiting(
         - updated_depart_count: New counter value
         - wait_message: Justification string, or None if not waiting
     """
+
     if wait_cycles <= 0:
         return None, depart_count, None
 
@@ -48,7 +47,7 @@ def apply_empty_vehicle_waiting(
     return None, wait_cycles, None
 
 # python
-def apply_random_edge_noise(
+def apply_random_edge(
     current_node: int,
     next_node_on_shortest_path: Optional[int],
     action_mapping: Dict[str, Any],
@@ -58,9 +57,7 @@ def apply_random_edge_noise(
 ) -> Tuple[Optional[int], Optional[str]]:
     """
     Apply random edge selection noise to departing action.
-
-    With probability random_edge_prob, choose a random outgoing edge
-    instead of the shortest path edge. Otherwise use shortest path.
+    With probability random_edge_prob, choose a random outgoing edge instead of the shortest path edge. Otherwise use shortest path.
 
     Args:
         current_node: Current node ID
@@ -75,12 +72,12 @@ def apply_random_edge_noise(
         - action_idx: Action to take, or None if should use shortest path
         - justification_message: Explanation string, or None
     """
+    # No noise, use shortest path
     if random_edge_prob <= 0:
-        # No noise, use shortest path
         return None, None
 
+    # Use shortest path (within probability)
     if rng.random() >= random_edge_prob:
-        # Use shortest path (within probability)
         return None, None
 
     # Select random outgoing edge
@@ -94,8 +91,8 @@ def apply_random_edge_noise(
             outgoing_edges.append(edge)
             edge_actions.append(action_idx)
 
+    # No outgoing edges available
     if not outgoing_edges:
-        # No outgoing edges available
         return None, None
 
     # Choose random outgoing edge
@@ -233,8 +230,7 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
     
     The vehicle:
     - Takes the fastest path to its current destination
-    - When reaching destination, chooses new destination with probability proportional
-      to Euclidean distance from current node
+    - When reaching destination, chooses new destination with probability proportional to Euclidean distance from current node
     - Uses edge speed to determine fastest path
     """
     
@@ -321,10 +317,8 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
     def _choose_cruise_destination(self, current_node) -> Optional[int]:
         """
         Choose new destination with probability proportional to distance.
-        
         Args:
             current_node: Current node ID
-            
         Returns:
             New destination node ID
         """
@@ -424,7 +418,7 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
                     human_destinations=human_destinations
                 )
                 if self.current_destination is None:
-                    # 如果乘客目的地缺失，退化为不动或巡游（看你偏好）
+                    # If human destinations are unknown, fallback to staying or cruising
                     return 0, "Passing (passengers aboard but destinations unknown)"
             else:
                 self.current_destination = self._choose_cruise_destination(current_node)
@@ -445,22 +439,22 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
         agent_positions = observation.get("agent_positions", {})
         action_mapping = observation.get('action_mapping', {})
         human_aboard = observation.get('human_aboard', {})
-        is_empty = all(v != self.agent_id for v in human_aboard.values())
 
         # If on edge, must pass
         my_position = observation.get('agent_positions', {}).get(self.agent_id)
         if isinstance(my_position, tuple):
             return 0, "Passing (already on edge)"
-        
         current_node = my_position
 
-        #本站点有人等车就先别走（给 boarding step 机会）
+        # If there are humans waiting at this node, do not depart yet
+        # (give the boarding step a chance to pick them up)
+        is_empty = all(v != self.agent_id for v in human_aboard.values()) #if vehicle is empty
         if is_empty:
             waiting_humans = [h for h, v in human_aboard.items() if v is None]
             humans_here = []
             for h in waiting_humans:
                 pos = agent_positions.get(h)
-                # 人在边上：pos 形如 ((u,v), progress) 或 (u,v) —— 都不算“在站点等车”
+                # If the human is on an edge, pos may look like ((u, v), progress) or (u, v); in either case, they are not considered "waiting at the station".
                 if isinstance(pos, tuple):
                     continue
                 # numpy -> python int
@@ -468,11 +462,11 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
                     pos = pos.item()
                 if pos == current_node:
                     humans_here.append(h)
+
             if humans_here:
                 self.depart_count = 0
                 return 0, f"Waiting for boarding at node {current_node}: {humans_here}"
-
-        # 应用等待机制
+        # Apply empty-vehicle waiting policy (fixed number of cycles)
         wait_action, self.depart_count, wait_message = apply_empty_vehicle_waiting(
             is_empty=is_empty,
             depart_count=self.depart_count,
@@ -482,9 +476,9 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
         if wait_action is not None:
             return wait_action, wait_message
 
-        # 如果没有等待，继续原逻辑
+        # If no waiting is required, continue with the original logic
         if self.current_destination is None:
-            self.depart_count = 0  # 重置计数器
+            self.depart_count = 0
             return 0, "Passing (no destination set)"
         
         # Get next node on shortest path
@@ -496,8 +490,9 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
             else:
                 return 0, f"Passing (no path to destination {self.current_destination})"
 
-        # 应用随机边噪声
-        noise_action, noise_message = apply_random_edge_noise(
+
+        # apply random outgoing edge noise
+        noise_action, noise_message = apply_random_edge(
             current_node=current_node,
             next_node_on_shortest_path=next_node,
             action_mapping=action_mapping,

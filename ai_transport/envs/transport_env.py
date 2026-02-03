@@ -209,8 +209,8 @@ class parallel_env(ParallelEnv):
 
         # Termination modes:
         # "initial_active" : only agents whose destination is NOT None at episode start participate in termination (participants are frozen once)
-        # "current_active" : agents with a non-None destination at the current timestep participate dynamically in termination
-        # "all_agents"     : all agents participate in termination (episode ends only when every agent is not on an edge and has reached its destination; usually not recommended)
+        # "current_active" : agents with a non-None destination at the current timestep participate dynamically in termination.
+        # "all_agents"     : all agents participate in termination (episode ends only when every agent is not on an edge and has reached its destination)
         self.termination_mode = "initial_active"
 
         # Cached network observation data (constant throughout episode)
@@ -1586,7 +1586,7 @@ class parallel_env(ParallelEnv):
           False : participating but not reached yet (includes being on edge, or dest missing)
           True  : participating and reached
         """
-        mode = getattr(self, "termination_mode", "initial_active")
+        mode = getattr(self, "termination_mode", "initial_active") # Default to "initial_active" if termination_mode attribute doesn't exist
 
         if mode == "initial_active":
             participants = self.termination_participants or set()
@@ -1609,7 +1609,6 @@ class parallel_env(ParallelEnv):
 
         else:
             raise ValueError(f"Unknown termination_mode: {mode}")
-
 
 
         status = {}

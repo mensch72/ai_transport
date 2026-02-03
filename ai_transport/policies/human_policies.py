@@ -19,9 +19,7 @@ def apply_wrong_vehicle_boarding(
 ) -> Tuple[int, Optional[str]]:
     """
     Apply probability of boarding wrong vehicle by mistake.
-
-    With probability wrong_vehicle_prob, human boards a random vehicle
-    instead of the best one.
+    With probability wrong_vehicle_prob, human boards a random vehicle instead of the best one.
 
     Args:
         available_vehicles: Dict mapping action_idx to vehicle_id
@@ -35,8 +33,8 @@ def apply_wrong_vehicle_boarding(
         - action_idx: Action to take (best or wrong vehicle)
         - message: Explanation, or None if using best vehicle
     """
+    # Board correct vehicle
     if wrong_vehicle_prob <= 0 or rng.random() >= wrong_vehicle_prob:
-        # Board correct vehicle
         return best_vehicle_action, None
 
     # Choose random vehicle from available options
@@ -62,9 +60,7 @@ def apply_wrong_station_unboarding(
 ) -> Tuple[Optional[int], Optional[str]]:
     """
     Apply probability of unboarding at wrong station by mistake.
-
-    With probability wrong_station_prob, human unboards at a random node
-    instead of the planned exit node or target.
+    With probability wrong_station_prob, human unboards at a random node instead of the planned exit node or target.
 
     Args:
         current_node: Current node ID
@@ -84,13 +80,12 @@ def apply_wrong_station_unboarding(
         # Don't make mistake
         return None, None
 
-    # Check if should unboard (at target or planned exit)
-    should_unboard = (current_node in target_nodes or
-                      (planned_exit_node is not None and current_node == planned_exit_node))
-
+    # Check if should unboard at planned exit
+    should_unboard =planned_exit_node is not None and current_node == planned_exit_node
     if should_unboard:
-        # Would normally unboard anyway, no mistake possible
-        return None, None
+        # Mistake type 1: miss the correct exit (stay onboard)
+        message = f"Missed planned exit at node {current_node}, staying onboard"
+        return 0, message  # continue
 
     # Make mistake: unboard at wrong station
     message = f"Mistakenly unboarding at node {current_node} (not planned exit)"
@@ -108,9 +103,7 @@ def apply_suboptimal_walking(
 ) -> Tuple[Optional[int], Optional[str]]:
     """
     Apply probability of walking in suboptimal direction by mistake.
-
-    With probability suboptimal_walk_prob, human chooses a random outgoing edge
-    instead of the best edge toward target.
+    With probability suboptimal_walk_prob, human chooses a random outgoing edge instead of the best edge toward target.
 
     Args:
         current_node: Current node ID
@@ -386,12 +379,12 @@ class TargetDestinationHumanPolicy(HumanPolicy):
         if current_node is None:
             return 0, "Passing (position unknown)"
 
-        # 检查是否在车上
+        # check if human is aboard any vehicle
         human_aboard = observation.get('human_aboard', {})
         if not human_aboard.get(self.agent_id):
             return 0, "Passing (not aboard)"
 
-        # 到达目标就下车（self.target 是这个 policy 的目标）
+        #unboard if at target
         #print('TargetDestinationHumanPolicy unboarding check: agent_id=', self.agent_id, ' current_node=', current_node,', target=', self.target,)
         if self.target is not None and current_node == self.target:
             return 1, f"Unboarding (arrived at target {self.target})"
@@ -494,7 +487,6 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
         self,
         agent_id: str,
         network,
-        # Todo:target_nodes to node?
         target_nodes: Set[int],
         p_wait: float = 0.5,
         wrong_vehicle_prob: float = 0.0,
@@ -756,7 +748,7 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
         # Find all vehicles at current node and collect nodes on their paths
         vehicle_info = []  # List of (vehicle_id, destination, path, nodes_on_path)
         all_candidate_nodes = set()
-        available_vehicles = {}  # 新增：记录所有可用车辆
+        available_vehicles = {}  # record available vehicles
         
         for action_idx in range(1, action_space_size):
             vehicle_id = details.get(action_idx)
@@ -764,7 +756,7 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
                 destination = vehicle_destinations.get(vehicle_id)
                 if destination is not None:
                     # Compute shortest duration path for this vehicle
-                    available_vehicles[action_idx] = vehicle_id  # 新增
+                    available_vehicles[action_idx] = vehicle_id
                     path = self._compute_shortest_duration_path(current_node, destination)
                     if path and isinstance(path, list):  # Validate path is a list
                         nodes_on_path = self._get_nodes_on_path(path)
@@ -815,7 +807,8 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
 
         if best_vehicle_action is None:
             return 0, "Passing (no suitable vehicle found)"
-            # 应用坐错车误差
+
+        # apply wrong vehicle boarding
         final_action, wrong_msg = apply_wrong_vehicle_boarding(
                 available_vehicles=available_vehicles,
                 best_vehicle_action=best_vehicle_action,
@@ -824,9 +817,10 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
                 rng=self.rng
             )
 
-        self.planned_exit_node = best_z# 仍然记录原计划的下车站
+        self.planned_exit_node = best_z# record the planned exit node
         if wrong_msg:
             return final_action, wrong_msg
+
         return best_vehicle_action, f"Boarding {best_vehicle_id} to reach node {best_z} (closer to target, ETA {best_time_to_z:.1f})"
 
     def _get_departing_action(self, observation: Dict, action_space_size: int) -> Tuple[int, str]:
@@ -891,7 +885,7 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
         if best_action == 0:
             return 0, "Passing (no edge toward target)"
 
-        # 应用次优行走误差
+        # apply suboptimal walking
         subopt_action, subopt_msg = apply_suboptimal_walking(
             current_node=current_node,
             target_nodes=self.target_nodes,
@@ -901,7 +895,6 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
             suboptimal_walk_prob=self.suboptimal_walk_prob,
             rng=self.rng
         )
-
         if subopt_msg:
             return subopt_action, subopt_msg
 
@@ -969,7 +962,7 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
         
         # CASE 2: If we're at the planned exit node, unboard
         if self.planned_exit_node is not None and current_node == self.planned_exit_node:
-            # 应用下错站误差
+            #  apply wrong station unboarding
             wrong_station_action, wrong_station_msg = apply_wrong_station_unboarding(
                 current_node=current_node,
                 planned_exit_node=self.planned_exit_node,
@@ -979,8 +972,7 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
                 wrong_station_prob=self.wrong_station_prob,
                 rng=self.rng
             )
-
-            if wrong_station_msg:
+            if wrong_station_action is not None:
                 self.previous_node = current_node
                 return wrong_station_action, wrong_station_msg
 
