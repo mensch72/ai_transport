@@ -188,9 +188,6 @@ def main():
                 actions[agent] = 0
         # Step environment
         obs, rewards, terms, truncs, infos = env.step(actions)
-
-
-
         active = [v for v in terms.values() if v is not None]
         should_term=(len(active) > 0) and all(active)
 

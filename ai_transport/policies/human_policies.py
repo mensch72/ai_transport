@@ -324,6 +324,7 @@ class TargetDestinationHumanPolicy(HumanPolicy):
         # Check if target should change based on time elapsed
         time_elapsed = real_time - self.last_real_time
         change_prob =1.0 - np.exp(-self.target_change_rate * time_elapsed)
+        #
 
         if (self.rng.random() < change_prob):
 

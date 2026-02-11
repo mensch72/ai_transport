@@ -1693,7 +1693,7 @@ class parallel_env(ParallelEnv):
 
         # Check termination condition
         terminations = self.termination_status()
-        print("STEP_TYPE", self.step_type, "terminate?", terminations)
+        print("should terminate", terminations)
 
         truncations = {agent: False for agent in self.agents}
         infos = {agent: {} for agent in self.agents}
