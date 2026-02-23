@@ -586,7 +586,7 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
         
         return total_duration
     
-    def _compute_walking_distance_to_target(self, node, walking_speed: float) -> float:
+    def _compute_walking_time_to_target(self, node, walking_speed: float) -> float:
         """
         Compute shortest walking time from node to any target node.
         
@@ -744,7 +744,7 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
         details = action_mapping.get('details', {})
         
         # Compute walking distance from current node to target
-        current_to_target_time = self._compute_walking_distance_to_target(current_node, walking_speed)
+        current_to_target_time = self._compute_walking_time_to_target(current_node, walking_speed)
         
         # Find all vehicles at current node and collect nodes on their paths
         vehicle_info = []  # List of (vehicle_id, destination, path, nodes_on_path)
@@ -772,7 +772,7 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
         best_z_to_target_time = float('inf')
         
         for z in all_candidate_nodes:
-            z_to_target_time = self._compute_walking_distance_to_target(z, walking_speed)
+            z_to_target_time = self._compute_walking_time_to_target(z, walking_speed)
             if z_to_target_time < best_z_to_target_time:
                 best_z_to_target_time = z_to_target_time
                 best_z = z
@@ -876,7 +876,7 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
             edge = details.get(action_idx)
             if edge and isinstance(edge, tuple):
                 next_node = edge[1]
-                walking_time = self._compute_walking_distance_to_target(next_node, walking_speed)
+                walking_time = self._compute_walking_time_to_target(next_node, walking_speed)
                 if walking_time < best_walking_time:
                     best_walking_time = walking_time
                     best_action = action_idx
@@ -953,7 +953,7 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
         walking_speed = my_attributes.get('speed', 1.0)
         
         # Compute walking distance from current node to target
-        current_to_target = self._compute_walking_distance_to_target(current_node, walking_speed)
+        current_to_target = self._compute_walking_time_to_target(current_node, walking_speed)
         
         # CASE 1: If we're at the target, definitely unboard
         if current_node in self.target_nodes:
@@ -1006,7 +1006,7 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
                         best_z_distance = float('inf')
                         
                         for z in nodes_on_path:
-                            z_to_target = self._compute_walking_distance_to_target(z, walking_speed)
+                            z_to_target = self._compute_walking_time_to_target(z, walking_speed)
                             if z_to_target < best_z_distance:
                                 best_z_distance = z_to_target
                                 best_z_on_alt = z
@@ -1022,7 +1022,7 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
         # CASE 4: Check if vehicle is going wrong direction
         if self.previous_node is not None:
             # Compute walking distance from previous node to target
-            previous_to_target = self._compute_walking_distance_to_target(self.previous_node, walking_speed)
+            previous_to_target = self._compute_walking_time_to_target(self.previous_node, walking_speed)
             
             # If current distance is larger than previous, vehicle is going wrong direction
             if current_to_target > previous_to_target:
@@ -1038,3 +1038,220 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
         """Reset policy state."""
         self.previous_node = None
         self.planned_exit_node = None
+
+class TraceDestinationHumanPolicy(HumanPolicy):
+    """
+    Policy that follows a predetermined trace of nodes as target destinations.
+
+    The human:
+    - Has a list of nodes as a trace to follow
+    - At each time step, the target destination is the next node in the trace. Once the human reaches the current target node, they update the target to the next node in the trace.
+    - If loop=True, cycles the trajectory; otherwise stays at final node.
+    """
+    def __init__(
+        self,
+        agent_id: str,
+        network,
+        target_trajectory: Optional[List[int]] = None,
+        loop: bool = True,
+        p_wait: float = 0.5,
+        seed: Optional[int] = None
+    ):
+        super().__init__(agent_id, seed)
+        self.network = network
+        self.trajectory = list(target_trajectory) if target_trajectory else []
+        self.loop = loop
+        self.p_wait = p_wait
+        self.index = 0
+        self.nodes = list(network.nodes())
+
+    def _generate_trajectory(self, start_node: int) -> List[int]:
+        import random
+
+        cur = start_node
+        trace = []
+
+        for _ in range(5):  # 随便定义长度
+            neighbors = list(self.network.neighbors(cur))
+            if not neighbors:
+                break
+            cur = self.rng.choice(neighbors)
+            trace.append(cur)
+
+        return trace
+
+    def _current_target(self) -> Optional[int]:
+        if not self.trajectory:
+            return None
+        if self.index < 0 or self.index >= len(self.trajectory):
+            return None
+        return self.trajectory[self.index]
+
+    def _advance_index(self) -> None:
+        if not self.trajectory:
+            return
+        self.index += 1
+        if self.index >= len(self.trajectory):
+            if self.loop:
+                self.index = 0
+            else:
+                self.index = len(self.trajectory) - 1
+
+    def _shortest_walking_time(self, source: int, target: int, walking_speed: float = 1.0) -> float:
+        """Compute walking time using self.network edge 'length' / walking_speed."""
+        if source == target:
+            return 0.0
+        try:
+            path = nx.shortest_path(self.network, source, target, weight='length')
+        except nx.NetworkXNoPath:
+            return float('inf')
+        time = 0.0
+        for u, v in zip(path[:-1], path[1:]):
+            edge_len = self.network[u][v].get('length', 1.0)
+            time += edge_len / max(walking_speed, 1e-6)
+        return time
+
+    def get_action(self, observation: Dict[str, Any], action_space_size: int) -> Tuple[int, str]:
+
+        #to check if there is a trajectory, if not generate one starting from current position
+        if not self.trajectory:
+            my_pos = observation.get('my_position')
+            if my_pos is None:
+                my_pos = observation.get('agent_positions', {}).get(self.agent_id)
+
+            if my_pos is None or isinstance(my_pos, tuple):
+                return 0, "Passing (no trajectory yet)"
+
+            start_node = my_pos
+
+            self.trajectory = self._generate_trajectory(start_node)
+            self.index = 0
+
+            if not self.trajectory:
+                return 0, "Passing (failed to generate trajectory)"
+
+        step_type = observation.get('step_type', 'departing')
+        if step_type == 'boarding':
+            return self._get_boarding_action(observation, action_space_size)
+        if step_type == 'departing':
+            return self._get_departing_action(observation, action_space_size)
+        if step_type == 'unboarding':
+            return self._get_unboarding_action(observation, action_space_size)
+        else:
+            if step_type == 'routing':
+                return 0, "Passing (no action in routing step)"
+            else:
+                return 0, "Passing"
+
+
+    def _get_boarding_action(self, observation: Dict[str, Any], action_space_size: int) -> Tuple[int, str]:
+        if action_space_size <= 1:
+            return 0, "Passing (no vehicles)"
+        target = self._current_target()
+        if target is None:
+            return 0, "Passing (no trajectory target)"
+
+        vehicle_destinations = observation.get('vehicle_destinations', {})
+        action_mapping = observation.get('action_mapping', {})
+        details = action_mapping.get('details', {})
+
+        remaining = self.trajectory[self.index:]
+        best_action = 0
+        best_priority = float('inf')
+        best_vehicle = None
+
+        for action_idx in range(1, action_space_size):
+            veh_id = details.get(action_idx)
+            if not veh_id:
+                continue
+            dest = vehicle_destinations.get(veh_id)
+            if dest is None:
+                continue
+            try:
+                pos = remaining.index(dest)
+                if pos < best_priority:
+                    best_priority = pos
+                    best_action = action_idx
+                    best_vehicle = veh_id
+            except ValueError:
+                continue
+
+        if best_action > 0:
+            return best_action, f"Boarding {best_vehicle} (heading toward upcoming target)"
+        return 0, "Passing (no vehicle matching trajectory)"
+
+
+    def _get_departing_action(self, observation: Dict[str, Any], action_space_size: int) -> Tuple[int, str]:
+        if action_space_size <= 1:
+            return 0, "Passing (no edges)"
+        target = self._current_target()
+        if target is None:
+            return 0, "Passing (no trajectory target)"
+
+        my_pos = observation.get('my_position')
+        if my_pos is None:
+            my_pos = observation.get('agent_positions', {}).get(self.agent_id)
+        if isinstance(my_pos, tuple):
+            return 0, "Passing (on edge)"
+        if my_pos is None:
+            return 0, "Passing (unknown position)"
+
+        current_node = my_pos
+        if current_node == target:
+            self._advance_index()
+            return 0, f"Arrived at target {target}, advancing trajectory"
+
+        # Decide whether to wait or walk
+        if self.rng.random() < self.p_wait:
+            return 0, f"Waiting at node {current_node} for vehicles (p_wait={self.p_wait})"
+
+        action_mapping = observation.get('action_mapping', {})
+        details = action_mapping.get('details', {})
+        agent_attrs = observation.get('agent_attributes', {})
+        walking_speed = agent_attrs.get(self.agent_id, {}).get('speed', 1.0)
+
+        best_action = 0
+        best_time = float('inf')
+        best_edge = None
+
+        for action_idx in range(1, action_space_size):
+            edge = details.get(action_idx)
+            if not edge or not isinstance(edge, tuple):
+                continue
+            next_node = edge[1]
+            t = self._shortest_walking_time(next_node, target, walking_speed)
+            if t < best_time:
+                best_time = t
+                best_action = action_idx
+                best_edge = edge
+
+        if best_action > 0:
+            return best_action, f"Walking toward trajectory target {target} via edge {best_edge}"
+        return 0, "Passing (no useful edge)"
+
+    def _get_unboarding_action(self, observation: Dict[str, Any], action_space_size: int) -> Tuple[int, str]:
+        if action_space_size <= 1:
+            return 0, "Passing (no unboard)"
+        my_pos = observation.get('my_position')
+        if my_pos is None:
+            my_pos = observation.get('agent_positions', {}).get(self.agent_id)
+        if isinstance(my_pos, tuple):
+            return 0, "Passing (on edge)"
+        if my_pos is None:
+            return 0, "Passing (unknown position)"
+
+        current_node = my_pos
+        aboard = observation.get('human_aboard', {}).get(self.agent_id)
+        if not aboard:
+            return 0, "Passing (not aboard)"
+
+        target = self._current_target()
+        if target is not None and current_node == target:
+            self._advance_index()
+            return 1, f"Unboarding (arrived at trajectory target {target})"
+
+        return 0, "Staying aboard (not at current trajectory target)"
+
+    def reset(self) -> None:
+        """Reset to start of trajectory."""
+        self.index = 0

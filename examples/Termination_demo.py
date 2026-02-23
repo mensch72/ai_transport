@@ -1,24 +1,24 @@
 # python
 """
-Termination_demo.py
+env_human_vehicle_policy_test
 This script builds simple synthetic observations and prints policy decisions.
 """
 import sys
 import networkx as nx
 import numpy as np
 from ai_transport.envs import parallel_env
-from ai_transport.policies import ShortestPathVehiclePolicy,TargetDestinationHumanPolicy, HeuristicRoutingHumanPolicy
+from ai_transport.policies import ShortestPathVehiclePolicy,TargetDestinationHumanPolicy, HeuristicRoutingHumanPolicy,TraceDestinationHumanPolicy
 
 
 
 def main():
     seed = 42
-    rng = np.random.RandomState(seed)
+    rng = np.random.default_rng(seed)
 
     # 1) Create network
     print("\n1. Creating network...")
     print("=" * 70)
-    tmp_env = parallel_env(num_humans=3, num_vehicles=2, observation_scenario="full", render_mode="human")
+    tmp_env = parallel_env(num_humans=4, num_vehicles=3, observation_scenario="full", render_mode="human")
     G = tmp_env.create_random_2d_network(num_nodes=10, bidirectional_prob=0.85,
                                      speed_mean=5.0, capacity_mean=10.0,
                                      coord_mean=0.0, coord_std=10.0, seed=seed)
@@ -28,8 +28,8 @@ def main():
 
     # Create environment
     env = parallel_env(
-        num_humans=3,
-        num_vehicles=2,
+        num_humans=4,
+        num_vehicles=3,
         network=G,
         observation_scenario='full',  # Important for policy
         render_mode="human"
@@ -41,39 +41,68 @@ def main():
 
 
     # 2) Create policies for agents (with waiting and random-edge noise)
+    def build_human_target_config(human_agents, candidate_nodes, rng, trajectory_length=5):
+        config = {}
+        for agent in human_agents:
+            #1.generate a random list of nodes (trajectory)
+            trajectory = [int(rng.choice(candidate_nodes)) for _ in range(trajectory_length)]
+            # choose a random node from the trajectory as the target (can be any node in the trajectory)
+            target = int(rng.choice(trajectory))
+            # create a set of unique nodes in the trajectory for heuristic policy
+            target_nodes = set(trajectory)
+            config[agent] = {
+                "target": target,
+                "target_nodes": target_nodes,
+                "target_trajectory": trajectory
+            }
+        return config
+
     print("\n2. Creating policies...")
     print("=" * 70)
     #paremeters
     start_node = 0
     candidate_nodes = [n for n in G.nodes() if n != start_node]
     human_agents = [a for a in env.agents if a in env.human_agents]
-    human_dests = rng.choice(candidate_nodes, size=len(human_agents), replace=False)
-    human_dest_map = dict(zip(human_agents, map(int, human_dests)))
+    human_dests = build_human_target_config(human_agents,candidate_nodes, rng)
+
 
     human_wait = 0.7
-    human_target_change_rate = 0
+    human_target_change_rate = 0.01
     vehicle_wait_cycles = 2
-    target_policy_fraction = 0.1
+    target_policy_probablity = 0.1
+    trace_policy_probablity = 0.3
 
     policies = {}
     for agent in env.agents:
         env.agent_positions[agent] =  start_node
         if agent in env.human_agents:
-            dest = human_dest_map[agent]
             env.human_aboard[agent] = None
-            if rng.random() < target_policy_fraction:
+            r = rng.random()
+            if r < target_policy_probablity:
+                dest = human_dests[agent]["target"]
                 policies[agent] = TargetDestinationHumanPolicy(
                     agent_id=agent,
                     network=G,
                     target_change_rate=human_target_change_rate,
                     seed=seed
                 )
+            elif r < target_policy_probablity + trace_policy_probablity:
+                dest_list = human_dests[agent]["target_trajectory"]
+                #env.human_destinations[agent] = dest_list
+                policies[agent] = TraceDestinationHumanPolicy(
+                    agent_id=agent,
+                    network=G,
+                    target_trajectory=dest_list,
+                    p_wait=human_wait,
+                    seed=seed
+                )
             else:
-                env.human_destinations[agent] = dest
+                dest_set = human_dests[agent]["target_nodes"]
+                #env.human_destinations[agent] = dest_set
                 policies[agent] = HeuristicRoutingHumanPolicy(
                     agent_id=agent,
                     network=G,
-                    target_nodes={dest},
+                    target_nodes=dest_set,
                     p_wait=human_wait,
                     seed=seed
                 )
@@ -95,6 +124,8 @@ def main():
                 policy_dest = policy.target
             elif isinstance(policy, HeuristicRoutingHumanPolicy):
                 policy_dest = policy.target_nodes
+            elif isinstance(policy, TraceDestinationHumanPolicy):
+                policy_dest = policy._current_target()
             else:
                 policy_dest = None
         else:
@@ -129,12 +160,17 @@ def main():
     for agent, policy in policies.items():
         if agent in env.human_agents:
             # TargetDestinationHumanPolicy: policy.target (single node)
-            if hasattr(policy, "target"):
+            if isinstance(policy, TargetDestinationHumanPolicy):
                 env.human_destinations[agent] = policy.target
 
+
             # HeuristicRoutingHumanPolicy: policy.target_nodes (set of nodes)
-            elif hasattr(policy, "target_nodes"):
+            elif isinstance(policy, HeuristicRoutingHumanPolicy):
                 env.human_destinations[agent] = set(policy.target_nodes)
+
+            # TraceDestinationHumanPolicy: policy._current_target() (current node in trajectory)
+            elif isinstance(policy, TraceDestinationHumanPolicy):
+                env.human_destinations[agent] = policy._current_target()
 
         elif agent in env.vehicle_agents:
             # ShortestPathVehiclePolicy: policy.current_destination
@@ -204,7 +240,7 @@ def main():
         # Progress report
         if (cycle + 1) % 10 == 0:
             print(f"\n   Progress: Cycle {cycle + 1}/120")
-            print('should end',terms)
+            #print('should end',terms)
             for agent_id in env.human_agents:
                 pos = env.agent_positions.get(agent_id)
                 aboard = env.human_aboard.get(agent_id)
@@ -213,14 +249,18 @@ def main():
                     target = policy.target
                 elif isinstance(policy, HeuristicRoutingHumanPolicy):
                     target = policy.target_nodes
+                elif isinstance(policy, TraceDestinationHumanPolicy):
+                    target = policy._current_target()
+                else:
+                    target = None
                 pos_str = str(pos) if not isinstance(pos, tuple) else f"edge {pos[0]}"
                 aboard_str = f" (aboard {aboard})" if aboard else ""
-                at_target = "✓ TARGET" if (
-                        not isinstance(pos, tuple)
-                        and (pos == target
-                            if isinstance(target, (int, np.integer))
-                            else pos in target)
-                             ) else ""
+                at_target = ""
+                if target is not None and (not isinstance(pos, tuple)):
+                    if isinstance(target, (int, np.integer)):
+                        at_target = "✓ TARGET" if pos == target else ""
+                    else:
+                        at_target = "✓ TARGET" if pos in target else ""
                 print(f"  {agent_id}: {pos_str}{aboard_str} -> {target} {at_target}")
 
     # Save video
