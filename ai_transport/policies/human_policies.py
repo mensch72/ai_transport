@@ -748,13 +748,13 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
         
         # Find all vehicles at current node and collect nodes on their paths
         vehicle_info = []  # List of (vehicle_id, destination, path, nodes_on_path)
-        all_candidate_nodes = set()
+        all_candidate_nodes = set() # Set of all nodes on paths to vehicle destinations
         available_vehicles = {}  # record available vehicles
         
         for action_idx in range(1, action_space_size):
-            vehicle_id = details.get(action_idx)
+            vehicle_id = details.get(action_idx) #action_space_size=number of available vehicles (including pass)
             if vehicle_id:
-                destination = vehicle_destinations.get(vehicle_id)
+                destination = vehicle_destinations.get(vehicle_id) #where the vehicle is going (if announced)
                 if destination is not None:
                     # Compute shortest duration path for this vehicle
                     available_vehicles[action_idx] = vehicle_id

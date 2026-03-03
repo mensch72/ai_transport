@@ -322,6 +322,9 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
         Returns:
             New destination node ID
         """
+        #get local rng for cruise destination selection to avoid affecting other random choices
+        local_rng = np.random.RandomState(int(self.agent_id.split('_')[-1]))
+
         # Get all other nodes
         other_nodes = [n for n in self.nodes if n != current_node]
         if not other_nodes:
@@ -337,7 +340,7 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
         probabilities = distances / distances.sum()
         
         # Sample new destination
-        return self.rng.choice(other_nodes, p=probabilities)
+        return local_rng.choice(other_nodes, p=probabilities)
     
     def _get_next_node_on_path(self, current_node, destination) -> Optional[int]:
         """

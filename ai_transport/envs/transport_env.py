@@ -1490,6 +1490,7 @@ class parallel_env(ParallelEnv):
                     return mapping
             # All other agents can only pass
             mapping['description'][0] = 'pass'
+            mapping['details'][0] = None
             return mapping
         
         elif self.step_type == 'unboarding':
@@ -1508,6 +1509,7 @@ class parallel_env(ParallelEnv):
                         return mapping
             # All other agents can only pass
             mapping['description'][0] = 'pass'
+            mapping['details'][0] = None
             return mapping
         
         elif self.step_type == 'boarding':
@@ -1528,6 +1530,7 @@ class parallel_env(ParallelEnv):
                     return mapping
             # All other agents can only pass
             mapping['description'][0] = 'pass'
+            mapping['details'][0] = None
             return mapping
         
         elif self.step_type == 'departing':
@@ -1555,10 +1558,12 @@ class parallel_env(ParallelEnv):
                         return mapping
             # All other agents can only pass
             mapping['description'][0] = 'pass'
+            mapping['details'][0] = None
             return mapping
         
         # Default fallback
         mapping['description'][0] = 'pass'
+        mapping['details'][0] = None
         return mapping
 
 
