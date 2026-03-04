@@ -1418,7 +1418,6 @@ class parallel_env(ParallelEnv):
             elif other_agent in self.human_agents:
                 agent_info['aboard'] = self.human_aboard[other_agent]
                 agent_info['destination'] = self.human_destinations.get(other_agent)
-            
             obs['agents_here'][other_agent] = agent_info
         
         return obs
