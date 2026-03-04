@@ -184,7 +184,7 @@ def main():
     env.start_video_recording()
     
     env.render()
-    env.save_frame('complex_heuristic_initial.png')
+    env.save_frame('example_outputs/heuristic_policy_initial.png')
     print("   Saved initial frame")
     
     # Run simulation
@@ -258,8 +258,8 @@ def main():
     
     # Save video
     print("\n6. Saving video...")
-    env.save_video('complex_heuristic_demo.mp4', fps=5)
-    env.save_frame('complex_heuristic_final.png')
+    env.save_video('example_outputs/heuristic_policy_demo.mp4', fps=5)
+    env.save_frame('example_outputs/heuristic_policy_final.png')
     print("   Saved video and final frame")
 
 
