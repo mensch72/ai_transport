@@ -2,8 +2,9 @@
 Hexagonal Grid Transport Simulation
 ====================================
 
-This script demonstrates a transport simulation on a hexagonal grid with:
-- A hexagonal grid of roughly 200 nodes (radius 8 = 217 nodes)
+This script demonstrates a transport simulation on a honeycomb lattice with:
+- A honeycomb grid where each cell is a hexagon, clipped to a hexagonal boundary
+- ~200 nodes (clip_radius=10 gives 192 nodes, each with at most 3 neighbours)
 - 100 passengers randomly distributed on boundary nodes
 - Each passenger's goal is to reach the opposite boundary
 - Vehicles use ShortestPathVehiclePolicy
@@ -25,68 +26,82 @@ from ai_transport import parallel_env
 from ai_transport.policies import HeuristicRoutingHumanPolicy, ShortestPathVehiclePolicy
 
 
-def create_hexagonal_grid(radius=8, edge_speed=3.0, edge_capacity=10, spacing=3.0):
+def create_hexagonal_grid(clip_radius=10, edge_speed=3.0, edge_capacity=10, spacing=3.0):
     """
-    Create a hexagonal grid graph using axial coordinates.
+    Create a honeycomb lattice (hexagonal cells) clipped to a hexagonal boundary.
 
-    A hexagonal grid of radius R contains all cells (q, r) satisfying
-    max(|q|, |r|, |q+r|) <= R, giving 3*R^2 + 3*R + 1 nodes.
-
-    For R=8, this yields 217 nodes.
+    Generates a honeycomb graph using ``nx.hexagonal_lattice_graph`` and clips
+    it to a pointy-top hexagonal region of the given radius so that each face
+    of the resulting planar graph is a hexagon.  Interior nodes have degree 3;
+    boundary nodes have degree 1 or 2.
 
     Args:
-        radius: Grid radius (number of rings around center). R=8 gives 217 nodes.
+        clip_radius: Clipping radius in lattice units.  Larger values yield
+            more nodes (e.g. 10 → 192 nodes, 11 → 254 nodes).
         edge_speed: Speed on each edge.
         edge_capacity: Capacity of each edge.
-        spacing: Distance between adjacent hex centers.
+        spacing: Euclidean distance between adjacent nodes (edge length).
 
     Returns:
         G: NetworkX DiGraph with node attributes (x, y, name) and
            edge attributes (length, speed, capacity).
-        boundary_nodes: Set of node IDs on the outermost ring.
+        boundary_nodes: Set of node IDs on the outer rim (degree < 3).
     """
+    # Generate a rectangular honeycomb lattice large enough to clip from
+    grid_size = int(clip_radius) * 2 + 4
+    H = nx.hexagonal_lattice_graph(grid_size, grid_size,
+                                   periodic=False, with_positions=True)
+
+    # Centre positions at the origin
+    pos = nx.get_node_attributes(H, 'pos')
+    xs = [p[0] for p in pos.values()]
+    ys = [p[1] for p in pos.values()]
+    cx, cy = (min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0
+
+    # Clip to a pointy-top hexagonal boundary of circumradius = clip_radius.
+    # A point (dx, dy) is inside a pointy-top regular hexagon with
+    # circumradius R iff  max(|dx|·2/√3, |dx|/√3 + |dy|) ≤ R.
+    sqrt3 = np.sqrt(3.0)
+    kept = set()
+    for n in H.nodes():
+        dx, dy = pos[n][0] - cx, pos[n][1] - cy
+        hex_dist = max(abs(dx) * 2.0 / sqrt3, abs(dx) / sqrt3 + abs(dy))
+        if hex_dist <= clip_radius:
+            kept.add(n)
+
+    sub = H.subgraph(kept)
+
+    # Re-index as a directed graph with integer node IDs
+    old_to_new = {}
     G = nx.DiGraph()
+    for idx, old_n in enumerate(sorted(kept, key=lambda n: (pos[n][1], pos[n][0]))):
+        old_to_new[old_n] = idx
+        x = (pos[old_n][0] - cx) * spacing
+        y = (pos[old_n][1] - cy) * spacing
+        G.add_node(idx, name=f"hex_{idx}", x=float(x), y=float(y))
 
-    # Generate all hex cells using axial coordinates (q, r)
-    # A hex cell is in the grid if max(|q|, |r|, |q+r|) <= radius
-    axial_to_id = {}
-    node_id = 0
+    # Add bidirectional edges with attributes
+    for u, v in sub.edges():
+        if u in old_to_new and v in old_to_new:
+            nu, nv = old_to_new[u], old_to_new[v]
+            x1, y1 = G.nodes[nu]['x'], G.nodes[nu]['y']
+            x2, y2 = G.nodes[nv]['x'], G.nodes[nv]['y']
+            length = float(np.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2))
+            for a, b in [(nu, nv), (nv, nu)]:
+                if not G.has_edge(a, b):
+                    G.add_edge(a, b,
+                               length=length,
+                               speed=float(edge_speed),
+                               capacity=int(edge_capacity))
+
+    # Boundary nodes: those with fewer than 3 neighbours in the undirected sense
     boundary_nodes = set()
-
-    for q in range(-radius, radius + 1):
-        for r in range(-radius, radius + 1):
-            s = -q - r  # cube coordinate constraint: q + r + s = 0
-            if max(abs(q), abs(r), abs(s)) <= radius:
-                # Convert axial to cartesian (pointy-top orientation)
-                x = spacing * (np.sqrt(3) * q + np.sqrt(3) / 2 * r)
-                y = spacing * (3.0 / 2 * r)
-
-                G.add_node(node_id, name=f"hex_{q}_{r}", x=float(x), y=float(y))
-                axial_to_id[(q, r)] = node_id
-
-                # Check if boundary node (on outermost ring)
-                if max(abs(q), abs(r), abs(s)) == radius:
-                    boundary_nodes.add(node_id)
-
-                node_id += 1
-
-    # Add edges: connect each node to its 6 hex neighbors (bidirectional)
-    # Axial neighbor directions
-    hex_directions = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)]
-
-    for (q, r), nid in axial_to_id.items():
-        for dq, dr in hex_directions:
-            neighbor = (q + dq, r + dr)
-            if neighbor in axial_to_id:
-                neighbor_id = axial_to_id[neighbor]
-                # Compute edge length from Euclidean distance
-                x1, y1 = G.nodes[nid]['x'], G.nodes[nid]['y']
-                x2, y2 = G.nodes[neighbor_id]['x'], G.nodes[neighbor_id]['y']
-                length = np.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
-                G.add_edge(nid, neighbor_id,
-                           length=float(length),
-                           speed=float(edge_speed),
-                           capacity=int(edge_capacity))
+    undirected_deg = {}
+    for n in G.nodes():
+        undirected_deg[n] = len(set(G.successors(n)) | set(G.predecessors(n)))
+    for n, deg in undirected_deg.items():
+        if deg < 3:
+            boundary_nodes.add(n)
 
     return G, boundary_nodes
 
@@ -127,7 +142,7 @@ def main():
     print()
 
     # ---- Configuration ----
-    HEX_RADIUS = 8          # Hex grid radius -> 3*64 + 24 + 1 = 217 nodes
+    CLIP_RADIUS = 10         # Honeycomb clip radius -> ~192 nodes (hexagonal cells)
     NUM_PASSENGERS = 100
     NUM_VEHICLES = 20
     NUM_STEPS = 4000         # Total environment steps (routing+unboarding+boarding+departing)
@@ -137,10 +152,10 @@ def main():
 
     np.random.seed(SEED)
 
-    # ---- 1. Create hexagonal grid ----
-    print("1. Creating hexagonal grid network...")
+    # ---- 1. Create honeycomb lattice ----
+    print("1. Creating honeycomb lattice network (hexagonal cells)...")
     network, boundary_nodes = create_hexagonal_grid(
-        radius=HEX_RADIUS, edge_speed=3.0, edge_capacity=10, spacing=3.0
+        clip_radius=CLIP_RADIUS, edge_speed=3.0, edge_capacity=10, spacing=3.0
     )
     boundary_list = sorted(boundary_nodes)
     print(f"   Nodes: {network.number_of_nodes()}, Edges: {network.number_of_edges()}")
@@ -339,7 +354,7 @@ def main():
     print("\n" + "=" * 70)
     print("SIMULATION SUMMARY")
     print("=" * 70)
-    print(f"  Network: hexagonal grid, radius {HEX_RADIUS}, "
+    print(f"  Network: honeycomb lattice, clip_radius {CLIP_RADIUS}, "
           f"{network.number_of_nodes()} nodes, {network.number_of_edges()} edges")
     print(f"  Boundary nodes: {len(boundary_list)}")
     print(f"  Passengers: {NUM_PASSENGERS}  (start on boundary, goal = opposite boundary)")
