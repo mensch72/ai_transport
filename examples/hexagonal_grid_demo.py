@@ -4,7 +4,7 @@ Hexagonal Grid Transport Simulation
 
 This script demonstrates a transport simulation on a honeycomb lattice with:
 - A honeycomb grid where each cell is a hexagon, clipped to a hexagonal boundary
-- ~200 nodes (clip_radius=10 gives 192 nodes, each with at most 3 neighbours)
+- ~200 nodes (clip_radius=10 gives 192 nodes, each with at most 3 neighbors)
 - 100 passengers randomly distributed on boundary nodes
 - Each passenger's goal is to reach the opposite boundary
 - Vehicles use ShortestPathVehiclePolicy
@@ -52,7 +52,7 @@ def create_hexagonal_grid(clip_radius=10, edge_speed=3.0, edge_capacity=10, spac
     H = nx.hexagonal_lattice_graph(grid_size, grid_size,
                                    periodic=False, with_positions=True)
 
-    # Centre positions at the origin
+    # Center positions at the origin
     pos = nx.get_node_attributes(H, 'pos')
     xs = [p[0] for p in pos.values()]
     ys = [p[1] for p in pos.values()]
@@ -94,7 +94,7 @@ def create_hexagonal_grid(clip_radius=10, edge_speed=3.0, edge_capacity=10, spac
                                speed=float(edge_speed),
                                capacity=int(edge_capacity))
 
-    # Boundary nodes: those with fewer than 3 neighbours in the undirected sense
+    # Boundary nodes: those with fewer than 3 neighbors in the undirected sense
     boundary_nodes = set()
     undirected_deg = {}
     for n in G.nodes():
