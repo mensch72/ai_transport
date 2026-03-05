@@ -158,7 +158,7 @@ def main():
 
     # ---- 3. Create environment ----
     print("\n3. Creating environment...")
-    vehicle_capacities = rng.randint(6, 9, NUM_VEHICLES).tolist()
+    vehicle_capacities = rng.randint(6, 10, NUM_VEHICLES).tolist()
     vehicle_speeds = rng.uniform(2.5, 3.5, NUM_VEHICLES).tolist()
     human_speeds = rng.uniform(1.0, 2.0, NUM_PASSENGERS).tolist()
 
@@ -262,7 +262,7 @@ def main():
         print("   No frames captured; skipping video.")
         return
 
-    max_goals = max(max(frame_goals), 1)
+    max_goals = max(max(frame_goals) if frame_goals else 0, 1)
 
     composite_frames = []
     for idx in range(n_frames):
