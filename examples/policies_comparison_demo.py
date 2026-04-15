@@ -35,8 +35,8 @@ def run_demo(demo_name, human_policy_type, seed=42, cycles=80):
 
     # Create environment
     env = parallel_env(
-        num_humans=4,
-        num_vehicles=3,
+        num_humans=10,
+        num_vehicles=4,
         network=G,
         observation_scenario='full',
         render_mode="human"
@@ -173,8 +173,8 @@ def run_demo(demo_name, human_policy_type, seed=42, cycles=80):
     print(f"  Video saved to `{outname}`")
 
 def main():
-    run_demo("Target_H + ShortestPath_V", "target")
-    run_demo("Heuristic_H + ShortestPath_V", "heuristic")
+    #run_demo("Target_H + ShortestPath_V", "target")
+    #run_demo("Heuristic_H + ShortestPath_V", "heuristic")
     run_demo("Trace_H + ShortestPath_V", "trace")
     print("\nAll demos complete.")
 
