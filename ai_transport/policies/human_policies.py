@@ -331,6 +331,13 @@ class TargetDestinationHumanPolicy(HumanPolicy):
             # Change to new random target
             self.target = self.rng.choice(self.nodes)
             self.last_real_time = real_time
+
+    def _get_my_position(self, observation: Dict[str, Any]):
+        """Read the controlled agent's position across observation modes."""
+        my_position = observation.get('my_position')
+        if my_position is None:
+            my_position = observation.get('agent_positions', {}).get(self.agent_id)
+        return my_position
     
     def get_action(self, observation: Dict[str, Any], action_space_size: int):
         """
@@ -372,7 +379,7 @@ class TargetDestinationHumanPolicy(HumanPolicy):
         if action_space_size <= 1:
             return 0, "Passing (no unboard option)"
 
-        pos = observation.get("agent_positions", {}).get(self.agent_id)
+        pos = self._get_my_position(observation)
         if isinstance(pos, tuple):
             return 0, "Passing (on edge)"
 
@@ -397,8 +404,7 @@ class TargetDestinationHumanPolicy(HumanPolicy):
         if action_space_size <= 1 or self.target is None:
             return 0, "Passing (no target or no vehicles available)"
 
-        agent_positions = observation.get('agent_positions', {})
-        my_pos = agent_positions.get(self.agent_id)
+        my_pos = self._get_my_position(observation)
         if not isinstance(my_pos, tuple) and self.target is not None and my_pos == self.target:
             return 0, f"Passing (already at target {self.target})"
         
@@ -431,9 +437,12 @@ class TargetDestinationHumanPolicy(HumanPolicy):
         if action_space_size <= 1 or self.target is None:
             return 0, "Passing (no target or no edges available)"
         
-        my_position = observation.get("agent_positions", {}).get(self.agent_id)#observation.get('my_position')
+        my_position = self._get_my_position(observation)
         if isinstance(my_position, tuple):
             return 0, "Passing (already on edge)"
+
+        if my_position is None:
+            return 0, "Passing (position unknown)"
         
         # Get current node
         current_node = my_position
@@ -747,7 +756,7 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
         current_to_target_time = self._compute_walking_time_to_target(current_node, walking_speed)
         
         # Find all vehicles at current node and collect nodes on their paths
-        vehicle_info = []  # List of (vehicle_id, destination, path, nodes_on_path)
+        vehicle_info = []  # List of (vehicle_id, destination, path, nodes_on_path, action_idx)
         all_candidate_nodes = set() # Set of all nodes on paths to vehicle destinations
         available_vehicles = {}  # record available vehicles
         
@@ -785,6 +794,7 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
         best_vehicle_id = None
         best_vehicle_action = None
         best_time_to_z = float('inf')
+        vehicle_exit_plans = {}
         
         for vehicle_id, destination, path, nodes_on_path, action_idx in vehicle_info:
             if best_z in nodes_on_path:
@@ -803,6 +813,11 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
                         best_time_to_z = time_to_z
                         best_vehicle_id = vehicle_id
                         best_vehicle_action = action_idx
+                    vehicle_exit_plans[action_idx] = {
+                        'vehicle_id': vehicle_id,
+                        'best_z': best_z,
+                        'time_to_z': time_to_z,
+                    }
                 except (ValueError, IndexError, AttributeError):
                     continue
 
@@ -818,11 +833,18 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
                 rng=self.rng
             )
 
-        self.planned_exit_node = best_z# record the planned exit node
+        final_plan = vehicle_exit_plans.get(final_action)
+        if final_plan is None:
+            return 0, "Passing (selected vehicle has no reachable exit plan)"
+
+        self.planned_exit_node = final_plan['best_z']
         if wrong_msg:
             return final_action, wrong_msg
 
-        return best_vehicle_action, f"Boarding {best_vehicle_id} to reach node {best_z} (closer to target, ETA {best_time_to_z:.1f})"
+        return final_action, (
+            f"Boarding {final_plan['vehicle_id']} to reach node {final_plan['best_z']} "
+            f"(closer to target, ETA {final_plan['time_to_z']:.1f})"
+        )
 
     def _get_departing_action(self, observation: Dict, action_space_size: int) -> Tuple[int, str]:
         """
@@ -1059,7 +1081,9 @@ class TraceDestinationHumanPolicy(HumanPolicy):
     ):
         super().__init__(agent_id, seed)
         self.network = network
-        self.trajectory = list(target_trajectory) if target_trajectory else []
+        self._user_provided_trajectory = list(target_trajectory) if target_trajectory else []
+        self._trajectory_is_auto_generated = target_trajectory is None
+        self.trajectory = list(self._user_provided_trajectory)
         self.loop = loop
         self.p_wait = p_wait
         self.index = 0
@@ -1125,6 +1149,7 @@ class TraceDestinationHumanPolicy(HumanPolicy):
             start_node = my_pos
 
             self.trajectory = self._generate_trajectory(start_node)
+            self._trajectory_is_auto_generated = True
             self.index = 0
 
             if not self.trajectory:
@@ -1255,3 +1280,7 @@ class TraceDestinationHumanPolicy(HumanPolicy):
     def reset(self) -> None:
         """Reset to start of trajectory."""
         self.index = 0
+        if self._trajectory_is_auto_generated:
+            self.trajectory = []
+        else:
+            self.trajectory = list(self._user_provided_trajectory)
