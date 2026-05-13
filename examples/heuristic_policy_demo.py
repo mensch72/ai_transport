@@ -8,6 +8,7 @@ This example shows:
 4. Graphical rendering with video recording
 """
 
+import os
 import networkx as nx
 from ai_transport import parallel_env
 from ai_transport.policies import HeuristicRoutingHumanPolicy
@@ -180,6 +181,7 @@ def main():
     
     # Enable graphical rendering and start video recording
     print("\n4. Starting video recording...")
+    os.makedirs('example_outputs', exist_ok=True)
     env.enable_rendering('graphical')
     env.start_video_recording()
     

@@ -4,6 +4,7 @@ policies_demo.py - three focused demos
 Each demo pairs one human policy with ShortestPathVehiclePolicy (vehicles)
 to inspect cooperation. Demos save a short video and print simple event logs.
 """
+import os
 import sys
 import networkx as nx
 import numpy as np
@@ -162,6 +163,7 @@ def run_demo(demo_name, human_policy_type, seed=42, cycles=80):
             env.render()
 
     # Save, close and summarize
+    os.makedirs("example_outputs", exist_ok=True)
     outname = f"example_outputs/{demo_name}.mp4"
     env.save_video(outname, fps=5)
     env.close()

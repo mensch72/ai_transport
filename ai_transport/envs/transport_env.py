@@ -1210,6 +1210,10 @@ class parallel_env(ParallelEnv):
             print("No frames recorded. Call start_video_recording() first.")
             return
         
+        output_dir = os.path.dirname(filename)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+
         print(f"Saving {len(self.frames)} frames...")
         
         try:
@@ -1269,6 +1273,9 @@ class parallel_env(ParallelEnv):
     def save_frame(self, filename='frame.png'):
         """Save current frame as PNG image"""
         if self.fig is not None:
+            output_dir = os.path.dirname(filename)
+            if output_dir:
+                os.makedirs(output_dir, exist_ok=True)
             self.fig.savefig(filename, dpi=150, bbox_inches='tight')
             print(f"Frame saved to {filename}")
 
@@ -1317,7 +1324,8 @@ class parallel_env(ParallelEnv):
         # Initialize vehicle destinations - all start with None
         self.vehicle_destinations = {agent: None for agent in self.vehicle_agents}
         self.human_destinations = {agent: None for agent in self.human_agents}
-        # clear termination participants for new episode (will be frozen lazily later)
+        # Clear termination participants for new episode; initial_active freezes
+        # lazily on first termination check after routing actions can set goals.
         self.termination_participants = None
 
         # Initialize step type - start with routing
@@ -1585,14 +1593,15 @@ class parallel_env(ParallelEnv):
 
     def termination_status(self):
         """
-        Per-agent status dict: agent -> True/False/None
-          None  : not participating (dest was None at episode start)
-          False : participating but not reached yet (includes being on edge, or dest missing)
+        Per-agent termination dict: agent -> True/False.
+          False : not participating, or participating but not reached yet
           True  : participating and reached
         """
         mode = getattr(self, "termination_mode", "initial_active") # Default to "initial_active" if termination_mode attribute doesn't exist
 
         if mode == "initial_active":
+            if self.termination_participants is None:
+                self.freeze_termination_participants()
             participants = self.termination_participants or set()
 
         elif mode == "current_active":
@@ -1618,7 +1627,7 @@ class parallel_env(ParallelEnv):
         status = {}
         for agent in self.agents:
             if agent not in participants:
-                status[agent] = None
+                status[agent] = False
                 continue
 
             # current dest (may change), but participant still must reach a dest
@@ -1656,6 +1665,32 @@ class parallel_env(ParallelEnv):
 
         return status
 
+    def _termination_participation(self):
+        """Return whether each active agent participates in termination checks."""
+        mode = getattr(self, "termination_mode", "initial_active")
+
+        if mode == "initial_active":
+            if self.termination_participants is None:
+                self.freeze_termination_participants()
+            participants = self.termination_participants or set()
+        elif mode == "current_active":
+            participants = set()
+            for agent in self.agents:
+                if agent in self.vehicle_agents:
+                    dest = self.vehicle_destinations.get(agent)
+                elif agent in self.human_agents:
+                    dest = self.human_destinations.get(agent)
+                else:
+                    dest = None
+                if dest is not None:
+                    participants.add(agent)
+        elif mode == "all_agents":
+            participants = set(self.agents)
+        else:
+            raise ValueError(f"Unknown termination_mode: {mode}")
+
+        return {agent: agent in participants for agent in self.agents}
+
 
 
     def step(self, actions):
@@ -1689,18 +1724,25 @@ class parallel_env(ParallelEnv):
         current_idx = step_cycle.index(self._step_type)
         self._step_type = step_cycle[(current_idx + 1) % len(step_cycle)]
         
-        # Generate observations based on scenario
-        observations = self._generate_observations()
-        
+        step_agents = list(self.agents)
+
         # All rewards are constantly zero
-        rewards = {agent: 0.0 for agent in self.agents}
+        rewards = {agent: 0.0 for agent in step_agents}
 
         # Check termination condition
         terminations = self.termination_status()
-        #print("should terminate", terminations)
+        participation = self._termination_participation()
 
-        truncations = {agent: False for agent in self.agents}
-        infos = {agent: {} for agent in self.agents}
+        truncations = {agent: False for agent in step_agents}
+        infos = {
+            agent: {"termination_participant": participation.get(agent, False)}
+            for agent in step_agents
+        }
+
+        # Keep agents active after reaching destinations. Higher-level wrappers
+        # use max_steps to decide episode boundaries, while terminations remain
+        # available as diagnostic per-agent status.
+        observations = self._generate_observations()
 
         # Auto-render only if render_mode is human and not currently recording
         # When recording, we want explicit control over when to capture frames

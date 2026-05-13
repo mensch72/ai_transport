@@ -896,6 +896,33 @@ def test_random_network_integration():
     assert len(obs) == len(test_env2.agents)
 
 
+def test_termination_status_is_boolean_and_keeps_agents_active():
+    """Terminations should be bools while fixed-horizon envs keep agents active."""
+    test_env = parallel_env(num_humans=1, num_vehicles=1)
+    test_env.reset(seed=42)
+    test_env._set_step_type_for_testing('boarding')
+
+    test_env.agent_positions['human_0'] = 0
+    test_env.agent_positions['vehicle_0'] = 0
+    test_env.human_aboard['human_0'] = None
+    test_env.vehicle_destinations['vehicle_0'] = 0
+    test_env.human_destinations['human_0'] = None
+    test_env.termination_mode = "initial_active"
+    test_env.termination_participants = None
+
+    actions = {agent: 0 for agent in test_env.agents}
+    obs, rewards, terms, truncs, infos = test_env.step(actions)
+
+    assert all(isinstance(value, bool) for value in terms.values())
+    assert terms['vehicle_0'] is True
+    assert terms['human_0'] is False
+    assert infos['vehicle_0']['termination_participant'] is True
+    assert infos['human_0']['termination_participant'] is False
+    assert 'vehicle_0' in test_env.agents
+    assert 'human_0' in test_env.agents
+    assert 'vehicle_0' in obs
+
+
 def test_graphical_rendering():
     """Test graphical rendering"""
     test_env = parallel_env(num_humans=2, num_vehicles=1, render_mode="human")

@@ -51,7 +51,7 @@ def main():
     print(f"  human_destinations: {env.human_destinations}\n")
 
     # Run 16 steps to see 4 complete cycles
-    for step_num in range(9):
+    for step_num in range(16):
         current_step_type = env.step_type
 
         print('-' * 70)

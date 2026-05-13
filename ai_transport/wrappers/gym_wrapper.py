@@ -300,9 +300,10 @@ class TransportGymWrapper(gym.Env):
         # Aggregate reward (sum over vehicles)
         reward = sum(vehicle_rewards.get(agent, 0.0) for agent in self.vehicle_agents)
         
-        # Episode termination
-        terminated = any(terms_dict.values()) or self.step_count >= self.max_steps
-        truncated = any(truncs_dict.values())
+        # Episodes use a fixed horizon. Underlying per-agent terminations are
+        # exposed in info for diagnostics but do not end optimization episodes.
+        terminated = False
+        truncated = self.step_count >= self.max_steps
         
         # Build observation and info
         obs = self._get_observation(obs_dict)
@@ -310,6 +311,8 @@ class TransportGymWrapper(gym.Env):
             'step_type': self.env.step_type,
             'real_time': self.env.real_time,
             'step_count': self.step_count,
+            'underlying_terminations': terms_dict,
+            'underlying_truncations': truncs_dict,
         }
         
         return obs, reward, terminated, truncated, info

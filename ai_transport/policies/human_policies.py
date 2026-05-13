@@ -73,7 +73,7 @@ def apply_wrong_station_unboarding(
 
     Returns:
         Tuple of (action_idx or None, message or None)
-        - action_idx: 1 (unboard) if making mistake, None otherwise
+        - action_idx: 0 (pass) if making a missed-exit mistake, None otherwise
         - message: Explanation if making mistake, None otherwise
     """
     if wrong_station_prob <= 0 or rng.random() >= wrong_station_prob:

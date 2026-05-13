@@ -161,11 +161,14 @@ class RandomVehiclePolicy(VehiclePolicy):
             agent_id: The ID of the agent this policy controls
             pass_prob_routing: Probability of passing (no destination) in routing step
             pass_prob_departing: Probability of passing (staying at node) in departing step
+            wait_cycles: Number of departing steps an empty vehicle waits at a node
             seed: Random seed for reproducibility
         """
         super().__init__(agent_id, seed)
         self.pass_prob_routing = pass_prob_routing
         self.pass_prob_departing = pass_prob_departing
+        self.wait_cycles = wait_cycles
+        self.depart_count = 0
 
     def get_action(self, observation: Dict[str, Any], action_space_size: int):
         """
@@ -185,6 +188,16 @@ class RandomVehiclePolicy(VehiclePolicy):
             pass_prob = self.pass_prob_routing
         elif step_type == 'departing':
             pass_prob = self.pass_prob_departing
+            human_aboard = observation.get('human_aboard', {})
+            is_empty = all(v != self.agent_id for v in human_aboard.values())
+            wait_action, self.depart_count, wait_message = apply_empty_vehicle_waiting(
+                is_empty=is_empty,
+                depart_count=self.depart_count,
+                wait_cycles=self.wait_cycles,
+                action_space_size=action_space_size
+            )
+            if wait_action is not None:
+                return wait_action, wait_message
         else:
             pass_prob = 1.0  # Always pass in unboarding/boarding
         
@@ -220,8 +233,8 @@ class RandomVehiclePolicy(VehiclePolicy):
         return action, justification
     
     def reset(self):
-        """Reset policy state (no state to reset for random policy)."""
-        pass
+        """Reset policy waiting state."""
+        self.depart_count = 0
 
 
 class ShortestPathVehiclePolicy(VehiclePolicy):
@@ -322,9 +335,6 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
         Returns:
             New destination node ID
         """
-        #get local rng for cruise destination selection to avoid affecting other random choices
-        local_rng = np.random.RandomState(int(self.agent_id.split('_')[-1]))
-
         # Get all other nodes
         other_nodes = [n for n in self.nodes if n != current_node]
         if not other_nodes:
@@ -340,7 +350,7 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
         probabilities = distances / distances.sum()
         
         # Sample new destination
-        return local_rng.choice(other_nodes, p=probabilities)
+        return self.rng.choice(other_nodes, p=probabilities)
     
     def _get_next_node_on_path(self, current_node, destination) -> Optional[int]:
         """
