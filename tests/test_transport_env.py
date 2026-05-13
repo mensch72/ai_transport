@@ -897,7 +897,7 @@ def test_random_network_integration():
 
 
 def test_termination_status_is_boolean_and_keeps_agents_active():
-    """Terminations should be bools while fixed-horizon envs keep agents active."""
+    """Fixed-horizon envs keep terminations false and expose reach status in infos."""
     test_env = parallel_env(num_humans=1, num_vehicles=1)
     test_env.reset(seed=42)
     test_env._set_step_type_for_testing('boarding')
@@ -914,10 +914,12 @@ def test_termination_status_is_boolean_and_keeps_agents_active():
     obs, rewards, terms, truncs, infos = test_env.step(actions)
 
     assert all(isinstance(value, bool) for value in terms.values())
-    assert terms['vehicle_0'] is True
+    assert terms['vehicle_0'] is False
     assert terms['human_0'] is False
     assert infos['vehicle_0']['termination_participant'] is True
     assert infos['human_0']['termination_participant'] is False
+    assert infos['vehicle_0']['destination_reached'] is True
+    assert infos['human_0']['destination_reached'] is False
     assert 'vehicle_0' in test_env.agents
     assert 'human_0' in test_env.agents
     assert 'vehicle_0' in obs

@@ -1729,19 +1729,23 @@ class parallel_env(ParallelEnv):
         # All rewards are constantly zero
         rewards = {agent: 0.0 for agent in step_agents}
 
-        # Check termination condition
-        terminations = self.termination_status()
+        # Track destination reach status for diagnostics. Fixed-horizon
+        # episodes do not terminate individual agents at the env layer.
+        destination_reached = self.termination_status()
         participation = self._termination_participation()
 
+        terminations = {agent: False for agent in step_agents}
         truncations = {agent: False for agent in step_agents}
         infos = {
-            agent: {"termination_participant": participation.get(agent, False)}
+            agent: {
+                "termination_participant": participation.get(agent, False),
+                "destination_reached": destination_reached.get(agent, False),
+            }
             for agent in step_agents
         }
 
         # Keep agents active after reaching destinations. Higher-level wrappers
-        # use max_steps to decide episode boundaries, while terminations remain
-        # available as diagnostic per-agent status.
+        # use max_steps to decide episode boundaries.
         observations = self._generate_observations()
 
         # Auto-render only if render_mode is human and not currently recording
