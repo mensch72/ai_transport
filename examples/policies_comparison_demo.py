@@ -154,7 +154,11 @@ def run_demo(demo_name, human_policy_type, seed=42, cycles=80):
                 actions[agent] = 0
 
         obs, rewards, terms, truncs, infos = env.step(actions)
-        active = [v for v in terms.values() if v is not None]
+        active = [
+            info.get("destination_reached", False)
+            for info in infos.values()
+            if info.get("termination_participant", False)
+        ]
         should_term = (len(active) > 0) and all(active)
         if should_term:
             break

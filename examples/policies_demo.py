@@ -224,8 +224,12 @@ def main():
                 actions[agent] = 0
         # Step environment
         obs, rewards, terms, truncs, infos = env.step(actions)
-        active = [v for v in terms.values() if v is not None]
-        should_term=(len(active) > 0) and all(active)
+        active = [
+            info.get("destination_reached", False)
+            for info in infos.values()
+            if info.get("termination_participant", False)
+        ]
+        should_term = (len(active) > 0) and all(active)
 
 
         if should_term:
@@ -271,16 +275,17 @@ def main():
                 policy_dest = getattr(policy, "current_destination", None)
                 if hasattr(env_dest, "item"):
                     env_dest = env_dest.item()
+                vehicle_target = policy_dest if policy_dest is not None else env_dest
 
                 pos_str = f"node {str(pos)}" if not isinstance(pos, tuple) else f"edge ({int(pos[0][0])}, {int(pos[0][1])})"
                 at_target = ""
-                if target is not None and (not isinstance(pos, tuple)):
-                    if isinstance(target, (int, np.integer)):
-                        at_target = "✓ TARGET" if pos == target else ""
+                if vehicle_target is not None and (not isinstance(pos, tuple)):
+                    if isinstance(vehicle_target, (int, np.integer)):
+                        at_target = "✓ TARGET" if pos == vehicle_target else ""
                     else:
-                        at_target = "✓ TARGET" if pos in target else ""
+                        at_target = "✓ TARGET" if pos in vehicle_target else ""
 
-                print(f"  {vehicle_id}: {pos_str} -> target={target} {at_target}")
+                print(f"  {vehicle_id}: {pos_str} -> target={vehicle_target} {at_target}")
 
     # Save video
     env.save_video('policies_demo.mp4', fps=5)

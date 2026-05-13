@@ -80,7 +80,7 @@ def apply_random_edge(
     if rng.random() >= random_edge_prob:
         return None, None
 
-    # Select random outgoing edge
+    # Select random outgoing edge, excluding the shortest-path edge when possible.
     details = action_mapping.get('details', {})
     outgoing_edges = []
     edge_actions = []
@@ -88,6 +88,8 @@ def apply_random_edge(
     for action_idx in range(1, action_space_size):
         edge = details.get(action_idx)
         if edge and isinstance(edge, tuple) and edge[0] == current_node:
+            if next_node_on_shortest_path is not None and edge[1] == next_node_on_shortest_path:
+                continue
             outgoing_edges.append(edge)
             edge_actions.append(action_idx)
 
@@ -407,12 +409,16 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
     
     def _get_routing_action(self, observation: Dict, action_space_size: int):
         """Set or update destination."""
-        my_position = observation.get('agent_positions', {}).get(self.agent_id)
+        my_position = observation.get('my_position')
+        if my_position is None:
+            my_position = observation.get('agent_positions', {}).get(self.agent_id)
         action_mapping = observation.get('action_mapping', {})
         
         # If on edge, can't act
         if isinstance(my_position, tuple):
             return 0, "Passing (on edge)"
+        if my_position is None:
+            return 0, "Passing (position unavailable)"
         
         current_node = my_position
 
@@ -449,20 +455,24 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
     
     def _get_departing_action(self, observation: Dict, action_space_size: int):
         """Choose edge on shortest path to destination."""
-        agent_positions = observation.get("agent_positions", {})
+        agent_positions = observation.get("agent_positions")
         action_mapping = observation.get('action_mapping', {})
         human_aboard = observation.get('human_aboard', {})
 
         # If on edge, must pass
-        my_position = observation.get('agent_positions', {}).get(self.agent_id)
+        my_position = observation.get('my_position')
+        if my_position is None and agent_positions is not None:
+            my_position = agent_positions.get(self.agent_id)
         if isinstance(my_position, tuple):
             return 0, "Passing (already on edge)"
+        if my_position is None:
+            return 0, "Passing (position unavailable)"
         current_node = my_position
 
         # If there are humans waiting at this node, do not depart yet
         # (give the boarding step a chance to pick them up)
         is_empty = all(v != self.agent_id for v in human_aboard.values()) #if vehicle is empty
-        if is_empty:
+        if is_empty and agent_positions is not None:
             waiting_humans = [h for h, v in human_aboard.items() if v is None]
             humans_here = []
             for h in waiting_humans:
@@ -529,3 +539,4 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
     def reset(self):
         """Reset policy state (current destination)."""
         self.current_destination = None
+        self.depart_count = 0

@@ -922,9 +922,6 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
             return subopt_action, subopt_msg
 
         return best_action, f"Walking toward target via edge {best_edge}"
-
-
-        return 0, "Passing (no edge toward target)"
     
     def _get_unboarding_action(self, observation: Dict, action_space_size: int) -> Tuple[int, str]:
         """
