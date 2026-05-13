@@ -12,40 +12,69 @@ import os
 import networkx as nx
 from ai_transport import parallel_env
 from ai_transport.policies import HeuristicRoutingHumanPolicy
+import matplotlib.pyplot as plt
+plt.set_loglevel('warning')
+
+
 
 
 class SimpleVehiclePolicy:
     """Simple vehicle policy that keeps destination and waits before departing."""
     
-    def __init__(self, agent_id, destination, wait_cycles=2, seed=None):
+    def __init__(self, agent_id, destination,graph, wait_cycles=2, seed=None):
         self.agent_id = agent_id
         self.destination = destination
         self.wait_cycles = wait_cycles  # Number of departing steps to wait before actually departing
         self.depart_count = 0
         self.seed = seed
+        self.graph =graph
     
     def get_action(self, observation, action_space_size):
         step_type = observation.get('step_type')
-        
+        action_mapping = observation.get("action_mapping", {})
+        details = action_mapping.get("details", {})
+        pos = observation.get('agent_positions')[self.agent_id]
+
+
         if step_type == 'routing':
-            # Keep our destination - find the action that sets it
-            action_mapping = observation.get('action_mapping', {})
-            details = action_mapping.get('details', {})
-            for action_idx in range(action_space_size):
-                if details.get(action_idx) == self.destination:
-                    return action_idx, f"Keeping destination {self.destination}"
+            if pos == self.destination:
+                #TODO：find a new destination?
+                return 0, f"At destination {self.destination}, passing"
+            else:
+                for action_idx in range(action_space_size):
+                    if details.get(action_idx) == self.destination:
+                        return action_idx, f"Keeping destination {self.destination}"
             return 0, "Passing"
         
         elif step_type == 'departing':
             # Wait a few cycles before departing to give humans time to board
+            if pos == self.destination:
+                return 0, f"At destination {self.destination}, passing"
+
             if self.depart_count < self.wait_cycles:
                 self.depart_count += 1
                 return 0, f"Waiting at node (count {self.depart_count}/{self.wait_cycles})"
-            
+
             # Now depart if we can
             if action_space_size > 1:
-                # Take first available edge (action 1)
-                return 1, f"Departing toward destination {self.destination}"
+                best_action = 0
+                best_dist = float("inf")
+                for action_id, edge in details.items():
+                    if edge is None:
+                        continue
+                    _, v = edge  # edge = (current_node, next_node)
+                    try:
+                        dist = nx.shortest_path_length(self.graph, source=v,target=self.destination,weight="length")
+                    except nx.NetworkXNoPath:
+                        continue
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_action = action_id
+                if best_action != 0:
+                    return best_action, (f"Departing via best edge, next={details[best_action][1]}, "f"dist_to_dest={best_dist:.2f}")
+                return 0, "Passing"
+
+
             return 0, "Passing"
         
         else:
@@ -55,7 +84,10 @@ class SimpleVehiclePolicy:
         self.depart_count = 0
 
 
+
+
 def main():
+
     print("=" * 70)
     print("AI Transport - Complex Heuristic Routing Demo with Unboarding")
     print("=" * 70)
@@ -95,6 +127,7 @@ def main():
         x2, y2 = positions[v]
         length = ((x2 - x1)**2 + (y2 - y1)**2)**0.5
         G.add_edge(u, v, length=length, speed=3.0, capacity=10)
+        G.add_edge(v, u, length=length, speed=3.0, capacity=10)
     
     # Create environment
     env = parallel_env(
@@ -126,44 +159,40 @@ def main():
                 env.vehicle_destinations[agent] = 4  # Goes upper path
             else:
                 env.vehicle_destinations[agent] = 10  # Goes lower path
-    
+
     print(f"\n   Network: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
     print(f"   Agents: 3 humans, 2 vehicles (all starting at node 0)")
-    
+
+
     # Create policies
     print("\n3. Creating policies...")
+    human_wait=0.7
+    policies = {'human_0': HeuristicRoutingHumanPolicy('human_0', G, target_nodes={1}, p_wait=human_wait, seed=1),
+        'human_1': HeuristicRoutingHumanPolicy('human_1', G, target_nodes={2}, p_wait=human_wait, seed=2),
+        'human_2': HeuristicRoutingHumanPolicy('human_2', G, target_nodes={8}, p_wait=human_wait, seed=3),
+        'vehicle_0': SimpleVehiclePolicy('vehicle_0', destination=1,graph=G, wait_cycles=2),
+        'vehicle_1': SimpleVehiclePolicy('vehicle_1', destination=8, graph=G,wait_cycles=2)}
     
-    policies = {
-        'human_0': HeuristicRoutingHumanPolicy(
-            'human_0', G, target_nodes={6}, p_wait=0.7, seed=1
-        ),
-        'human_1': HeuristicRoutingHumanPolicy(
-            'human_1', G, target_nodes={7}, p_wait=0.6, seed=2
-        ),
-        'human_2': HeuristicRoutingHumanPolicy(
-            'human_2', G, target_nodes={10}, p_wait=0.3, seed=3
-        ),
-        'vehicle_0': SimpleVehiclePolicy('vehicle_0', destination=4, wait_cycles=2),
-        'vehicle_1': SimpleVehiclePolicy('vehicle_1', destination=10, wait_cycles=2)
-    }
-    
-    print(f"   - human_0: target {6} (far upper), p_wait=0.7")
-    print(f"   - human_1: target {7} (middle), p_wait=0.6")
-    print(f"   - human_2: target {10} (lower), p_wait=0.3")
-    print("   - vehicle_0: destination 4 (upper path)")
-    print("   - vehicle_1: destination 10 (lower path)")
+    print(f"   - human_0: target {1} (far upper), p_wait={human_wait}")
+    print(f"   - human_1: target {2} (middle), p_wait={human_wait}")
+    print(f"   - human_2: target {8} (lower), p_wait={human_wait}")
+    print("   - vehicle_0: destination 1 (upper path)")
+    print("   - vehicle_1: destination 8 (lower path)")
     
     # Enable graphical rendering and start video recording
     print("\n4. Starting video recording...")
+    os.makedirs('example_outputs', exist_ok=True)
     env.enable_rendering('graphical')
     env.start_video_recording()
     
     env.render()
-    env.save_frame('complex_heuristic_initial.png')
+    env.save_frame('example_outputs/heuristic_policy_initial.png')
     print("   Saved initial frame")
     
     # Run simulation
     print("\n5. Running complex simulation...")
+
+
     obs = {agent: env._generate_observation_for_agent(agent) for agent in env.agents}
     
     boarding_events = []
@@ -173,7 +202,6 @@ def main():
     
     for cycle in range(80):  # More cycles for complex scenario
         current_step = env.step_type
-        
         # Get actions from policies
         actions = {}
         for agent in env.agents:
@@ -182,7 +210,7 @@ def main():
                 action_space_size = env.action_space(agent).n
                 action, justification = policy.get_action(obs[agent], action_space_size)
                 actions[agent] = action
-                
+
                 # Track events
                 if current_step == 'boarding' and agent in env.human_agents and action > 0:
                     vehicle_id = obs[agent].get('action_mapping', {}).get('details', {}).get(action)
@@ -208,7 +236,11 @@ def main():
         
         # Step environment
         obs, rewards, terms, truncs, infos = env.step(actions)
-        
+
+        if any(terms.values()) or any(truncs.values()):
+            print(f"Episode ended at cycle {cycle}")
+            break
+
         # Render after departing step
         if env.step_type == 'routing':
             env.render()
@@ -228,10 +260,13 @@ def main():
     
     # Save video
     print("\n6. Saving video...")
-    env.save_video('complex_heuristic_demo.mp4', fps=5)
-    env.save_frame('complex_heuristic_final.png')
+    env.save_video('example_outputs/heuristic_policy_demo.mp4', fps=5)
+    env.save_frame('example_outputs/heuristic_policy_final.png')
     print("   Saved video and final frame")
-    
+
+
+    # Close environment
+
     env.close()
     
     print("\n" + "=" * 70)
@@ -271,3 +306,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+

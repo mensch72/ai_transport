@@ -1,133 +1,300 @@
+# python
 """
-Demonstration of policy classes for AI Transport environment.
-
-Shows how to use the RandomHumanPolicy, TargetDestinationHumanPolicy,
-RandomVehiclePolicy, and ShortestPathVehiclePolicy classes.
+env_human_vehicle_policy_test
+This script builds simple synthetic observations and prints policy decisions.
 """
-
 import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import networkx as nx
+import numpy as np
+from ai_transport.envs import parallel_env
+from ai_transport.policies import ShortestPathVehiclePolicy,TargetDestinationHumanPolicy, HeuristicRoutingHumanPolicy,TraceDestinationHumanPolicy
 
-from ai_transport import parallel_env
-from ai_transport.policies import (
-    RandomHumanPolicy,
-    TargetDestinationHumanPolicy,
-    RandomVehiclePolicy,
-    ShortestPathVehiclePolicy
-)
+
 
 def main():
-    print("="*70)
-    print("AI Transport Environment - Policy Demonstration")
-    print("="*70)
-    print()
-    
-    # Create environment with random 2D network
-    print("1. Creating environment with random network...")
-    env = parallel_env(num_humans=4, num_vehicles=2, observation_scenario='full')
-    network = env.create_random_2d_network(num_nodes=10, bidirectional_prob=0.5, seed=42)
+    seed = 42
+    rng = np.random.default_rng(seed)
+
+    # 1) Create network
+    print("\n1. Creating network...")
+    print("=" * 70)
+    tmp_env = parallel_env(num_humans=4, num_vehicles=3, observation_scenario="full", render_mode="human")
+    G = tmp_env.create_random_2d_network(num_nodes=10, bidirectional_prob=0.85,
+                                     speed_mean=5.0, capacity_mean=10.0,
+                                     coord_mean=0.0, coord_std=10.0, seed=seed)
+    tmp_env.close()
+    print(f"\n   Network: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+
+
+    # Create environment
     env = parallel_env(
         num_humans=4,
-        num_vehicles=2,
-        network=network,
-        observation_scenario='full',
-        render_mode='human'
+        num_vehicles=3,
+        network=G,
+        observation_scenario='full',  # Important for policy
+        render_mode="human"
     )
-    
-    obs, info = env.reset(seed=42)
-    print(f"   Network: {network.number_of_nodes()} nodes, {network.number_of_edges()} edges")
-    print(f"   Agents: 4 humans, 2 vehicles")
-    print()
-    
-    # Create policies for agents
-    print("2. Creating policies...")
+
+    env.reset(seed=seed )
+
+
+
+
+    # 2) Create policies for agents (with waiting and random-edge noise)
+    def build_human_target_config(human_agents, candidate_nodes, rng, trajectory_length=5):
+        config = {}
+        for agent in human_agents:
+            #1.generate a random list of nodes (trajectory)
+            trajectory = [int(rng.choice(candidate_nodes)) for _ in range(trajectory_length)]
+            # choose a random node from the trajectory as the target (can be any node in the trajectory)
+            target = int(rng.choice(trajectory))
+            # create a set of unique nodes in the trajectory for heuristic policy
+            target_nodes = set(trajectory)
+            config[agent] = {
+                "target": target,
+                "target_nodes": target_nodes,
+                "target_trajectory": trajectory
+            }
+        return config
+
+    print("\n2. Creating policies...")
+    print("=" * 70)
+    #paremeters
+    start_node = 0
+    candidate_nodes = [n for n in G.nodes() if n != start_node]
+    human_agents = [a for a in env.agents if a in env.human_agents]
+    human_dests = build_human_target_config(human_agents,candidate_nodes,rng)
+
+
+    human_wait = 0.7
+    human_target_change_rate = 0.01
+    vehicle_wait_cycles = 2
+    target_policy_probablity = 0.1
+    trace_policy_probablity = 0.4
+
     policies = {}
-    
-    # Human policies
-    policies['human_0'] = RandomHumanPolicy('human_0', pass_prob_boarding=0.5, seed=1)
-    policies['human_1'] = RandomHumanPolicy('human_1', pass_prob_boarding=0.3, seed=2)
-    policies['human_2'] = TargetDestinationHumanPolicy('human_2', network, target_change_rate=0.1, seed=3)
-    policies['human_3'] = TargetDestinationHumanPolicy('human_3', network, target_change_rate=0.05, seed=4)
-    
-    # Vehicle policies
-    policies['vehicle_0'] = RandomVehiclePolicy('vehicle_0', pass_prob_routing=0.2, seed=5)
-    policies['vehicle_1'] = ShortestPathVehiclePolicy('vehicle_1', network, seed=6)
-    
-    print("   Policies:")
-    print("   - human_0: RandomHumanPolicy (pass_prob_boarding=0.5)")
-    print("   - human_1: RandomHumanPolicy (pass_prob_boarding=0.3)")
-    print("   - human_2: TargetDestinationHumanPolicy (change_rate=0.1)")
-    print("   - human_3: TargetDestinationHumanPolicy (change_rate=0.05)")
-    print("   - vehicle_0: RandomVehiclePolicy (pass_prob_routing=0.2)")
-    print("   - vehicle_1: ShortestPathVehiclePolicy")
-    print()
-    
-    # Run simulation
-    print("3. Running simulation with policies...")
-    print()
-    
-    for step in range(20):
-        # Print summary every 4 steps (before taking action)
-        if step % 4 == 0:
-            print(f"   Step {step}:")
-            print(f"   - Step type: {env.step_type}")
-            print(f"   - Real time: {env.real_time:.2f}s")
-            print(f"   - Active agents: {len(env.agents)}")
-            
-            # Show target destinations for TargetDestinationHumanPolicy
-            for agent_id, policy in policies.items():
-                if isinstance(policy, TargetDestinationHumanPolicy):
-                    target = policy.target_destination
-                    print(f"   - {agent_id} target: node {target}")
-                elif isinstance(policy, ShortestPathVehiclePolicy):
-                    dest = policy.current_destination
-                    print(f"   - {agent_id} destination: node {dest}")
-            
-            print()
-            print("   Actions taken:")
-        
+    for agent in env.agents:
+        env.agent_positions[agent] =  start_node
+        if agent in env.human_agents:
+            env.human_aboard[agent] = None
+            r = rng.random()
+            if r < target_policy_probablity:
+                dest = human_dests[agent]["target"]
+                policies[agent] = TargetDestinationHumanPolicy(
+                    agent_id=agent,
+                    network=G,
+                    target_change_rate=human_target_change_rate,
+                    seed=seed
+                )
+            elif r < target_policy_probablity + trace_policy_probablity:
+                dest_list = human_dests[agent]["target_trajectory"]
+                #env.human_destinations[agent] = dest_list
+                policies[agent] = TraceDestinationHumanPolicy(
+                    agent_id=agent,
+                    network=G,
+                    target_trajectory=dest_list,
+                    p_wait=human_wait,
+                    seed=seed
+                )
+            else:
+                dest_set = human_dests[agent]["target_nodes"]
+                #env.human_destinations[agent] = dest_set
+                policies[agent] = HeuristicRoutingHumanPolicy(
+                    agent_id=agent,
+                    network=G,
+                    target_nodes=dest_set,
+                    p_wait=human_wait,
+                    seed=seed
+                )
+        elif agent in env.vehicle_agents:
+            policies[agent] = ShortestPathVehiclePolicy(
+                agent_id=agent,
+                network=G,
+                wait_cycles=vehicle_wait_cycles,
+                seed=seed
+            )
+    print("\n   Agent targets:")
+    for agent in sorted(env.agents):
+        policy = policies.get(agent)
+        policy_name = policy.__class__.__name__ if policy is not None else "None"
+        if agent in env.human_agents:
+            env_dest = env.human_destinations.get(agent)
+            agent_type = "human"
+            if isinstance(policy, TargetDestinationHumanPolicy):
+                policy_dest = policy.target
+            elif isinstance(policy, HeuristicRoutingHumanPolicy):
+                policy_dest = policy.target_nodes
+            elif isinstance(policy, TraceDestinationHumanPolicy):
+                policy_dest = policy._current_target()
+            else:
+                policy_dest = None
+        else:
+            env_dest = env.vehicle_destinations.get(agent)
+            agent_type = "vehicle"
+            # 策略内部真正使用的目标
+            if isinstance(policy, ShortestPathVehiclePolicy):
+                policy_dest = policy.current_destination
+            else:
+                policy_dest = None
+        if hasattr(env_dest, "item"):
+            env_dest = env_dest.item()
+        print(f"   - {agent}: {agent_type} | "f"env_dest={env_dest} | "f"policy_dest={policy_dest} | "f"policy={policy_name}")
+
+    # 3) Run simulation
+    print("\n3. Running complex simulation...")
+    print("=" * 70)
+
+    #Enable graphical rendering and start video recording
+    env.enable_rendering('graphical')
+    env.start_video_recording()
+    env.render()
+
+    #Run simulation
+    obs = {agent: env._generate_observation_for_agent(agent) for agent in env.agents}
+
+    boarding_events = []
+    unboarding_events = []
+    walking_events = []
+    frame_counter = 0
+
+    for agent, policy in policies.items():
+        if agent in env.human_agents:
+            # TargetDestinationHumanPolicy: policy.target (single node)
+            if isinstance(policy, TargetDestinationHumanPolicy):
+                env.human_destinations[agent] = policy.target
+
+
+            # HeuristicRoutingHumanPolicy: policy.target_nodes (set of nodes)
+            elif isinstance(policy, HeuristicRoutingHumanPolicy):
+                env.human_destinations[agent] = set(policy.target_nodes)
+
+            # TraceDestinationHumanPolicy: policy._current_target() (current node in trajectory)
+            elif isinstance(policy, TraceDestinationHumanPolicy):
+                env.human_destinations[agent] = policy._current_target()
+
+        elif agent in env.vehicle_agents:
+            # ShortestPathVehiclePolicy: policy.current_destination
+            if hasattr(policy, "current_destination"):
+                env.vehicle_destinations[agent] = policy.current_destination
+
+    env.termination_mode = "current_active"
+    env.freeze_termination_participants()
+    print("FROZEN termination_participants =", env.termination_participants)
+
+    for cycle in range(120):  # More cycles for complex scenario
+        current_step = env.step_type
         # Get actions from policies
         actions = {}
-        action_justifications = {}
         for agent in env.agents:
             policy = policies.get(agent)
             if policy:
                 action_space_size = env.action_space(agent).n
-                action, justification = policy.get_action(obs[agent], action_space_size)
+                result = policy.get_action(obs[agent], action_space_size)
+                if result is None:
+                    # 某些 policy 可能在某些步骤返回 None
+                    actions[agent] = 0
+                    continue
+                if isinstance(result, tuple) and len(result) == 2:
+                    action, justification = result
+                else:
+                    # 只返回 action（如 ShortestPathVehiclePolicy）
+                    action = result
+                    justification = "No justification available"
+
                 actions[agent] = action
-                action_justifications[agent] = justification
+                # Track events
+                if current_step == 'boarding' and agent in env.human_agents and action > 0:
+                    vehicle_id = obs[agent].get('action_mapping', {}).get('details', {}).get(action)
+                    boarding_events.append(f"Cycle {cycle}: {agent} boards {vehicle_id}")
+                    print(f"\n   🚌 BOARDING (cycle {cycle}): {agent} boards {vehicle_id}")
+                    print(f"      {justification}")
+                if current_step == 'unboarding' and agent in env.human_agents and action > 0:
+                    aboard = env.human_aboard.get(agent)
+                    unboarding_events.append(f"Cycle {cycle}: {agent} unboards from {aboard}")
+                    print(f"\n   🚶 UNBOARDING (cycle {cycle}): {agent} unboards from {aboard}")
+                    print(f"      {justification}")
+                if current_step == 'departing' and agent in env.human_agents and action > 0:
+                    if env.human_aboard.get(agent) is None:  # Walking, not riding
+                        edge = obs[agent].get('action_mapping', {}).get('details', {}).get(action)
+                        walking_events.append(f"Cycle {cycle}: {agent} walks")
+                        if len(walking_events) <= 5:  # Only print first few
+                            print(f"\n   🚶 WALKING (cycle {cycle}): {agent}")
+                            print(f"      {justification}")
             else:
-                actions[agent] = 0  # Pass
-                action_justifications[agent] = "Passing (no policy)"
-        
-        # Print actions with justifications
-        for agent in env.agents:
-            action_idx = actions[agent]
-            justification = action_justifications[agent]
-            print(f"   - {agent}: action {action_idx} - {justification}")
-        
-        print()
-        
+                actions[agent] = 0
         # Step environment
-        obs, rewards, terminations, truncations, infos = env.step(actions)
-    
-    print("="*70)
-    print("Policy demonstration complete!")
-    print("="*70)
-    print()
-    print("Policy Features Demonstrated:")
-    print()
-    print("Human Policies:")
-    print("- RandomHumanPolicy: Random actions with configurable pass probabilities")
-    print("- TargetDestinationHumanPolicy: Boards vehicles heading toward target,")
-    print("  walks toward target, target changes over time")
-    print()
-    print("Vehicle Policies:")
-    print("- RandomVehiclePolicy: Random actions with configurable pass probabilities")
-    print("- ShortestPathVehiclePolicy: Takes fastest path to destination,")
-    print("  chooses new destination proportional to distance")
-    print()
+        obs, rewards, terms, truncs, infos = env.step(actions)
+        active = [
+            info.get("destination_reached", False)
+            for info in infos.values()
+            if info.get("termination_participant", False)
+        ]
+        should_term = (len(active) > 0) and all(active)
+
+
+        if should_term:
+            print(f"Episode ended at cycle {cycle}")
+            break
+
+        # Render after departing step
+        if env.step_type == 'routing':
+            env.render()
+            frame_counter += 1
+
+        # Progress report
+        if (cycle + 1) % 10 == 0:
+            print(f"\n   Progress: Cycle {cycle + 1}/120")
+            #print('should end',terms)
+            for agent_id in env.human_agents:
+                pos = env.agent_positions.get(agent_id)
+                aboard = env.human_aboard.get(agent_id)
+                policy = policies[agent_id]
+                if isinstance(policy, TargetDestinationHumanPolicy):
+                    target = policy.target
+                elif isinstance(policy, HeuristicRoutingHumanPolicy):
+                    target = policy.target_nodes
+                elif isinstance(policy, TraceDestinationHumanPolicy):
+                    target = policy._current_target()
+                else:
+                    target = None
+                pos_str = f"node {str(pos)}" if not isinstance(pos, tuple) else f"edge ({int(pos[0][0])}, {int(pos[0][1])})"
+                aboard_str = f" (aboard {aboard})" if aboard else ""
+                at_target = ""
+                if target is not None and (not isinstance(pos, tuple)):
+                    if isinstance(target, (int, np.integer)):
+                        at_target = "✓ TARGET" if pos == target else ""
+                    else:
+                        at_target = "✓ TARGET" if pos in target else ""
+                print(f"  {agent_id}: {pos_str}{aboard_str} -> target={target} {at_target}")
+
+            for vehicle_id in env.vehicle_agents:
+                pos = env.agent_positions.get(vehicle_id)
+                policy = policies.get(vehicle_id)
+
+                env_dest = env.vehicle_destinations.get(vehicle_id)
+                policy_dest = getattr(policy, "current_destination", None)
+                if hasattr(env_dest, "item"):
+                    env_dest = env_dest.item()
+                vehicle_target = policy_dest if policy_dest is not None else env_dest
+
+                pos_str = f"node {str(pos)}" if not isinstance(pos, tuple) else f"edge ({int(pos[0][0])}, {int(pos[0][1])})"
+                at_target = ""
+                if vehicle_target is not None and (not isinstance(pos, tuple)):
+                    if isinstance(vehicle_target, (int, np.integer)):
+                        at_target = "✓ TARGET" if pos == vehicle_target else ""
+                    else:
+                        at_target = "✓ TARGET" if pos in vehicle_target else ""
+
+                print(f"  {vehicle_id}: {pos_str} -> target={vehicle_target} {at_target}")
+
+    # Save video
+    env.save_video('policies_demo.mp4', fps=5)
+
+    # Close environment
+    env.close()
+
+    print("Complex Demo Complete!")
+    print("=" * 70)
 
 if __name__ == "__main__":
     main()

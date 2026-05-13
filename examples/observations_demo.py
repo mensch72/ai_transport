@@ -24,8 +24,7 @@ def print_observation_summary(obs, agent_name, scenario):
         print(f"  Total agents visible: {len(obs['agent_positions'])}")
     
     if 'node_counts' in obs:
-        total_at_nodes = sum(counts['humans'] + counts['vehicles'] 
-                            for counts in obs['node_counts'].values())
+        total_at_nodes = sum(counts['humans'] + counts['vehicles'] for counts in obs['node_counts'].values())
         print(f"  Total agents at nodes (statistical): {total_at_nodes}")
 
 

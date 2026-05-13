@@ -1,162 +1,143 @@
 """
-Example demonstrating the step logic for different step types.
-
-This example shows:
-1. Routing step: vehicles set destinations
-2. Unboarding step: humans unboard from vehicles
-3. Boarding step: humans board vehicles with capacity constraints
-4. Departing step: agents move along edges with time advancing
+Simple demo to check if step logic is correct.
+Verifies that step_type cycles correctly: routing -> unboarding -> boarding -> departing -> routing...
 """
 
-import numpy as np
 import networkx as nx
 from ai_transport import parallel_env
 
 
 def main():
-    # Create a network
+    # Create a simple network
     G = nx.DiGraph()
-    G.add_node(0, name="Station_A")
-    G.add_node(1, name="Station_B")
-    G.add_node(2, name="Station_C")
-    
+    G.add_node(0, name="A")
+    G.add_node(1, name="B")
+    G.add_node(2, name="C")
+
     G.add_edge(0, 1, length=10.0, speed=5.0, capacity=10)
     G.add_edge(1, 2, length=15.0, speed=5.0, capacity=8)
     G.add_edge(2, 0, length=12.0, speed=6.0, capacity=12)
-    
+
     # Create environment
     env = parallel_env(
-        render_mode="human",
         num_humans=2,
-        num_vehicles=1,
-        network=G,
-        human_speeds=[2.0, 2.0],
-        vehicle_speeds=[3.0],
-        vehicle_capacities=[2],
-        vehicle_fuel_uses=[1.2]
+        num_vehicles=2,
+        network=G
     )
-    
+
+    env.reset(seed=345)
+
+    # Set all agents at node 0
+    env.agent_positions['human_0'] = 0
+    env.agent_positions['human_1'] = 0
+    env.agent_positions['vehicle_0'] = 0
+    env.agent_positions['vehicle_1'] = 0
+    env.human_aboard['human_0'] = None
+    env.human_aboard['human_1'] = None
+
+    # Set destinations so agents know where to go
+    env.vehicle_destinations['vehicle_0'] = 2
+    env.vehicle_destinations['vehicle_1'] = 2
+    env.human_destinations['human_0'] = 2
+    env.human_destinations['human_1'] = 1
+
     print("=" * 70)
     print("AI Transport Environment - Step Logic Demo")
     print("=" * 70)
-    
-    # Reset environment
-    print("\n--- Initial State ---")
-    env.reset(seed=42)
-    env.render()
-    
-    # Step 1: Routing
-    print("\n" + "=" * 70)
-    print("Step 1: ROUTING - Vehicle sets destination to node 2")
-    print("=" * 70)
-    # Environment starts in routing step after reset
-    actions = {
-        'human_0': 0,  # Pass
-        'human_1': 0,  # Pass
-        'vehicle_0': 3  # Set destination to node 2 (action 3 = node index 2)
-    }
-    env.step(actions)
-    env.render()
-    
-    # Step 2: Unboarding (skipped - call with pass actions)
-    actions = {agent: 0 for agent in env.agents}  # All pass
-    env.step(actions)
-    
-    # Step 3: Boarding
-    print("\n" + "=" * 70)
-    print("Step 3: BOARDING - Both humans try to board vehicle")
-    print("=" * 70)
-    # Now we're in boarding step
-    actions = {
-        'human_0': 1,  # Board vehicle_0
-        'human_1': 1,  # Board vehicle_0
-        'vehicle_0': 0  # Pass
-    }
-    env.step(actions)
-    env.render()
-    print(f"Vehicle capacity: {env.agent_attributes['vehicle_0']['capacity']}")
-    
-    # Step 4: Departing
-    print("\n" + "=" * 70)
-    print("Step 4: DEPARTING - Vehicle departs with humans aboard")
-    print("=" * 70)
-    # Now we're in departing step
-    actions = {
-        'human_0': 0,  # Pass (aboard, can't walk)
-        'human_1': 0,  # Pass (aboard, can't walk)
-        'vehicle_0': 1  # Depart on first outgoing edge
-    }
-    print(f"Before step - Real time: {env.real_time:.2f}")
-    env.step(actions)
-    print(f"After step - Real time: {env.real_time:.2f}")
-    env.render()
-    
-    # Cycle through to next departing step
-    for _ in range(3):  # routing, unboarding, boarding
-        actions = {agent: 0 for agent in env.agents}
+    print(f"\nInitial state:")
+    print(f"  positions: {env.agent_positions}")
+    print(f"  aboard: {env.human_aboard}")
+    print(f"  vehicle_destinations: {env.vehicle_destinations}")
+    print(f"  human_destinations: {env.human_destinations}\n")
+
+    # Run 16 steps to see 4 complete cycles
+    for step_num in range(16):
+        current_step_type = env.step_type
+
+        print('-' * 70)
+        print(f"Step {step_num}: {current_step_type.upper()}")
+        print('-' * 70)
+
+        # Show current state BEFORE step
+        print(f"  Before:")
+        print(f"    real_time: {env.real_time:.2f}")
+        print(f"    positions: {env.agent_positions}")
+        print(f"    aboard: {env.human_aboard}")
+
+        # Choose meaningful actions based on step_type
+        actions = {}
+        for agent in env.agents:
+            space = env.action_space(agent)
+            mapping = env._get_action_mapping(agent)
+            action = 0  # Default: pass
+
+            # ROUTING: vehicles set destinations
+            if current_step_type == 'routing' and agent in env.vehicle_agents:
+                # If destination not set, set it
+                dest = env.vehicle_destinations.get(agent)
+                if dest is None:
+                    # Find action to set destination to node 1 or 2
+                    for act_idx, detail in mapping.get('details', {}).items():
+                        if detail == 1 or detail == 2:
+                            action = act_idx
+                            break
+
+            # UNBOARDING: humans check if they reached destination
+            elif current_step_type == 'unboarding' and agent in env.human_agents:
+                # If aboard and at destination node, unboard
+                aboard_vehicle = env.human_aboard.get(agent)
+                if aboard_vehicle is not None:
+                    dest = env.human_destinations.get(agent)
+                    current_pos = env.agent_positions.get(agent)
+                    # If reached destination, unboard
+                    if current_pos == dest:
+                        space_n = getattr(space, 'n', 1)
+                        if space_n > 1:
+                            action = 1  # Unboard
+
+            # BOARDING: humans try to board vehicles
+            elif current_step_type == 'boarding' and agent in env.human_agents:
+                # Check if already at destination - if yes, don't board
+                dest = env.human_destinations.get(agent)
+                current_pos = env.agent_positions.get(agent)
+
+                # Only board if: not aboard, not at destination, and vehicles available
+                if env.human_aboard.get(agent) is None and current_pos != dest:
+                    space_n = getattr(space, 'n', 1)
+                    if space_n > 1:
+                        # Choose first available vehicle (action 1)
+                        action = 1
+
+            # DEPARTING: vehicles depart on edges
+            elif current_step_type == 'departing' and agent in env.vehicle_agents:
+                # If at node with outgoing edges, depart
+                space_n = getattr(space, 'n', 1)
+                if space_n > 1:
+                    action = 1  # Depart on first edge
+
+            actions[agent] = action
+
+        # Print actions with descriptions
+        print(f"  Actions:")
+        for agent, action in actions.items():
+            mapping = env._get_action_mapping(agent)
+            desc = mapping.get('description', {}).get(action, 'unknown')
+            detail = mapping.get('details', {}).get(action, None)
+            print(f"    {agent}: action={action}, desc='{desc}', detail={detail}")
+
+
+        # Execute the sampled actions
         env.step(actions)
-    
-    # Step 5: Continue departing (time advances)
-    print("\n" + "=" * 70)
-    print("Step 5: DEPARTING - Time advances, agents move along edge")
-    print("=" * 70)
-    actions = {
-        'human_0': 0,
-        'human_1': 0,
-        'vehicle_0': 0
-    }
-    print(f"Before step - Real time: {env.real_time:.2f}")
-    env.step(actions)
-    print(f"After step - Real time: {env.real_time:.2f}")
-    env.render()
-    
-    # Cycle to unboarding step
-    for _ in range(2):  # routing, unboarding
-        actions = {agent: 0 for agent in env.agents}
-        env.step(actions)
-    
-    # Step 6: Unboarding
-    print("\n" + "=" * 70)
-    print("Step 6: UNBOARDING - One human unboards")
-    print("=" * 70)
-    # Now we're in unboarding step
-    actions = {
-        'human_0': 1,  # Unboard
-        'human_1': 0,  # Stay aboard
-        'vehicle_0': 0  # Pass
-    }
-    env.step(actions)
-    env.render()
-    
-    # Cycle to departing step
-    for _ in range(2):  # boarding, departing
-        actions = {agent: 0 for agent in env.agents}
-        env.step(actions)
-    
-    # Step 7: Departing again
-    print("\n" + "=" * 70)
-    print("Step 7: DEPARTING - Human walks, vehicle departs")
-    print("=" * 70)
-    # Now we're in departing step
-    outgoing = list(env.network.out_edges(1))
-    print(f"Available edges from node 1: {outgoing}")
-    
-    actions = {
-        'human_0': 1,  # Walk on first edge (not aboard)
-        'human_1': 0,  # Pass (aboard)
-        'vehicle_0': 1  # Depart on first edge
-    }
-    print(f"Before step - Real time: {env.real_time:.2f}")
-    env.step(actions)
-    print(f"After step - Real time: {env.real_time:.2f}")
-    env.render()
-    
-    print("\n" + "=" * 70)
-    print("Demo complete!")
-    print("=" * 70)
-    
-    env.close()
+
+        # Show state AFTER step
+        print(f"  After:")
+        print(f"    real_time: {env.real_time:.2f}")
+        print(f"    positions: {env.agent_positions}")
+        print(f"    aboard: {env.human_aboard}")
+        print(f"    -> next step_type: {env.step_type.upper()}\n")
+
 
 
 if __name__ == "__main__":
     main()
+

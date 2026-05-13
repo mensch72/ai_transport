@@ -83,6 +83,8 @@ class parallel_env(ParallelEnv):
         vehicle_capacities=None,
         vehicle_fuel_uses=None,
         observation_scenario='full'
+
+
     ):
         """
         The init method takes in environment arguments and should define the following attributes:
@@ -202,9 +204,17 @@ class parallel_env(ParallelEnv):
         self.real_time = None
         self.agent_positions = None
         self.vehicle_destinations = None
+        self.human_destinations = None
         self.human_aboard = None  # For each human: None or vehicle ID
+        self.termination_participants = None
         self._step_type = None  # One of: 'routing', 'unboarding', 'boarding', 'departing' (private, use step_type property)
-        
+
+        # Termination modes:
+        # "initial_active" : only agents whose destination is NOT None at episode start participate in termination (participants are frozen once)
+        # "current_active" : agents with a non-None destination at the current timestep participate dynamically in termination.
+        # "all_agents"     : all agents participate in termination (episode ends only when every agent is not on an edge and has reached its destination)
+        self.termination_mode = "initial_active"
+
         # Cached network observation data (constant throughout episode)
         self._cached_network_nodes = None
         self._cached_network_edges = None
@@ -241,13 +251,20 @@ class parallel_env(ParallelEnv):
         G.add_node(0, name="A")
         G.add_node(1, name="B")
         G.add_node(2, name="C")
-        # Add edges with required attributes
-        G.add_edge(0, 1, length=10.0, speed=5.0, capacity=10)
-        G.add_edge(1, 2, length=15.0, speed=5.0, capacity=10)
-        G.add_edge(2, 0, length=12.0, speed=5.0, capacity=10)
+
+        # Base directed cycle (ensures strong connectivity)
+        base_edges = [(0, 1), (1, 2), (2, 0)]
+        for u, v in base_edges:
+            G.add_edge(u, v, length=10.0, speed=5.0, capacity=10)
+
+        # Deterministically make selected cycle edges bidirectional to add variety.
+        for u, v in base_edges[:2]:
+            if not G.has_edge(v, u):
+                G.add_edge(v, u, length=G[u][v]['length'], speed=G[u][v]['speed'], capacity=G[u][v]['capacity'])
+
         return G
     
-    def create_random_2d_network(self, num_nodes=10, bidirectional_prob=0.3, 
+    def create_random_2d_network(self, num_nodes=10, bidirectional_prob=0.85,
                                  speed_mean=5.0, capacity_mean=10.0, 
                                  coord_mean=0.0, coord_std=10.0, seed=None):
         """
@@ -278,7 +295,7 @@ class parallel_env(ParallelEnv):
         
         # Generate random 2D coordinates from Gaussian distribution
         coords = rng.normal(loc=coord_mean, scale=coord_std, size=(num_nodes, 2))
-        
+
         # Compute Delaunay triangulation
         tri = Delaunay(coords)
         
@@ -327,7 +344,43 @@ class parallel_env(ParallelEnv):
                     G.add_edge(u, v, length=length, speed=speed, capacity=capacity)
                 else:
                     G.add_edge(v, u, length=length, speed=speed, capacity=capacity)
-        
+
+            # Ensure strong connectivity: if not strongly connected, connect SCCs in a directed cycle
+            if not nx.is_strongly_connected(G):
+                sccs = list(nx.strongly_connected_components(G))
+                # Choose one representative node from each SCC
+                reps = [min(scc) for scc in sccs]
+
+                # Create bridging edges between consecutive SCC representatives
+                for i in range(len(reps)):
+                    a = reps[i]
+                    b = reps[(i + 1) % len(reps)]
+                    if not G.has_edge(a, b):
+                        # compute length between a and b (fallback to euclidean distance)
+                        dx = coords[b, 0] - coords[a, 0]
+                        dy = coords[b, 1] - coords[a, 1]
+                        length = float(np.sqrt(dx ** 2 + dy ** 2))
+                        speed = float(rng.exponential(scale=speed_mean))
+                        capacity = float(rng.exponential(scale=capacity_mean))
+                        speed = max(speed, 0.1)
+                        capacity = max(capacity, 1.0)
+                        G.add_edge(a, b, length=length, speed=speed, capacity=capacity)
+                # After adding a cycle among SCCs the graph should be strongly connected.
+                # As a safety, if still not strongly connected (very unlikely), add reverse edges
+                if not nx.is_strongly_connected(G):
+                    # add reverse edges for any isolated directions until connected
+                    for u, v in list(G.edges()):
+                        if not G.has_edge(v, u):
+                            data = G[u][v]
+                            G.add_edge(
+                                v, u,
+                                length=data.get('length', 1.0),
+                                speed=data.get('speed', 1.0),
+                                capacity=data.get('capacity', 1.0),
+                            )
+                        if nx.is_strongly_connected(G):
+                            break
+
         return G
     
     def initialize_random_positions(self, seed=None):
@@ -554,7 +607,9 @@ class parallel_env(ParallelEnv):
                     print(f"    destination: {dest}")
                 elif agent in self.human_agents:
                     aboard = self.human_aboard[agent]
+                    dest = self.human_destinations.get(agent)
                     print(f"    aboard: {aboard}")
+                    print(f"    target: {dest}")
         else:
             print("Environment terminated")
     
@@ -667,7 +722,23 @@ class parallel_env(ParallelEnv):
         
         # Note: We don't save state here anymore - it's saved BEFORE movement
         # in _process_departing_actions() so that we have the correct starting positions
-    
+
+        # ---- FIX: advance render anchor to current event time ----
+        self._last_event_time = t_currentevent
+        self._positions_at_last_event = self.agent_positions.copy()
+
+
+        self._speeds_at_last_event = {}
+        for agent in self.agents:
+            pos = self.agent_positions.get(agent)
+            if isinstance(pos, tuple):
+                edge, _ = pos
+                edge_data = self.network[edge[0]][edge[1]]
+                self._speeds_at_last_event[agent] = self._get_agent_speed(agent, edge_data)
+            else:
+                self._speeds_at_last_event[agent] = 0.0
+
+
     def _render_graphical(self, goal_info=None, value_dict=None, title=None):
         """
         Graphical rendering using matplotlib.
@@ -1136,6 +1207,10 @@ class parallel_env(ParallelEnv):
             print("No frames recorded. Call start_video_recording() first.")
             return
         
+        output_dir = os.path.dirname(filename)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+
         print(f"Saving {len(self.frames)} frames...")
         
         try:
@@ -1195,6 +1270,9 @@ class parallel_env(ParallelEnv):
     def save_frame(self, filename='frame.png'):
         """Save current frame as PNG image"""
         if self.fig is not None:
+            output_dir = os.path.dirname(filename)
+            if output_dir:
+                os.makedirs(output_dir, exist_ok=True)
             self.fig.savefig(filename, dpi=150, bbox_inches='tight')
             print(f"Frame saved to {filename}")
 
@@ -1242,7 +1320,11 @@ class parallel_env(ParallelEnv):
         
         # Initialize vehicle destinations - all start with None
         self.vehicle_destinations = {agent: None for agent in self.vehicle_agents}
-        
+        self.human_destinations = {agent: None for agent in self.human_agents}
+        # Clear termination participants for new episode; initial_active freezes
+        # lazily on first termination check after routing actions can set goals.
+        self.termination_participants = None
+
         # Initialize step type - start with routing
         self._step_type = 'routing'
         
@@ -1282,10 +1364,12 @@ class parallel_env(ParallelEnv):
             'agent_positions': dict(self.agent_positions),
             'vehicle_destinations': dict(self.vehicle_destinations),
             'human_aboard': dict(self.human_aboard),
+            'human_destinations': dict(self.human_destinations),
             'agent_attributes': dict(self.agent_attributes),
             'network_nodes': self._cached_network_nodes,
             'network_edges': self._cached_network_edges,
-            'action_mapping': self._get_action_mapping(agent)
+            'action_mapping': self._get_action_mapping(agent),
+            'my_position': self.agent_positions[agent],
         }
         return obs
     
@@ -1338,7 +1422,7 @@ class parallel_env(ParallelEnv):
                 agent_info['destination'] = self.vehicle_destinations[other_agent]
             elif other_agent in self.human_agents:
                 agent_info['aboard'] = self.human_aboard[other_agent]
-            
+                agent_info['destination'] = self.human_destinations.get(other_agent)
             obs['agents_here'][other_agent] = agent_info
         
         return obs
@@ -1391,7 +1475,7 @@ class parallel_env(ParallelEnv):
         - 'details': specific IDs/objects that each action index refers to
         """
         if self.step_type is None or agent not in self.agents:
-            return {'description': {0: 'pass'}, 'details': {}}
+            return {'description': {0: 'pass'}, 'details': {0: None}}
         
         mapping = {'description': {}, 'details': {}}
         
@@ -1400,20 +1484,23 @@ class parallel_env(ParallelEnv):
                 pos = self.agent_positions.get(agent)
                 if pos is not None and not isinstance(pos, tuple):
                     # Vehicle at node can set destination
+                    #TODO: limit to reachable nodes?
                     mapping['description'][0] = 'set_destination_none'
                     mapping['details'][0] = None
                     nodes = list(self.network.nodes())
                     for i, node in enumerate(nodes):
-                        mapping['description'][i + 1] = f'set_destination_node'
+                        mapping['description'][i + 1] = f'set_destination_node'#_{node}
                         mapping['details'][i + 1] = node
                     return mapping
             # All other agents can only pass
             mapping['description'][0] = 'pass'
+            mapping['details'][0] = None
             return mapping
         
         elif self.step_type == 'unboarding':
             if agent in self.human_agents:
                 aboard = self.human_aboard.get(agent)
+
                 if aboard is not None:
                     vehicle_pos = self.agent_positions.get(aboard)
                     if vehicle_pos is not None and not isinstance(vehicle_pos, tuple):
@@ -1422,9 +1509,11 @@ class parallel_env(ParallelEnv):
                         mapping['details'][0] = None
                         mapping['description'][1] = 'unboard'
                         mapping['details'][1] = aboard  # Include vehicle ID being unboarded from
+
                         return mapping
             # All other agents can only pass
             mapping['description'][0] = 'pass'
+            mapping['details'][0] = None
             return mapping
         
         elif self.step_type == 'boarding':
@@ -1445,6 +1534,7 @@ class parallel_env(ParallelEnv):
                     return mapping
             # All other agents can only pass
             mapping['description'][0] = 'pass'
+            mapping['details'][0] = None
             return mapping
         
         elif self.step_type == 'departing':
@@ -1472,11 +1562,133 @@ class parallel_env(ParallelEnv):
                         return mapping
             # All other agents can only pass
             mapping['description'][0] = 'pass'
+            mapping['details'][0] = None
             return mapping
         
         # Default fallback
         mapping['description'][0] = 'pass'
+        mapping['details'][0] = None
         return mapping
+
+
+    #  Termination logic
+    def freeze_termination_participants(self):
+        """Freeze termination participants NOW based on current env destinations."""
+        participants = set()
+        for agent in self.agents:
+            if agent in self.vehicle_agents:
+                dest = self.vehicle_destinations.get(agent)
+            elif agent in self.human_agents:
+                dest = self.human_destinations.get(agent)
+            else:
+                dest = None
+
+            if dest is not None:
+                participants.add(agent)
+
+        self.termination_participants = participants
+
+    def termination_status(self):
+        """
+        Per-agent termination dict: agent -> True/False.
+          False : not participating, or participating but not reached yet
+          True  : participating and reached
+        """
+        mode = getattr(self, "termination_mode", "initial_active") # Default to "initial_active" if termination_mode attribute doesn't exist
+
+        if mode == "initial_active":
+            if self.termination_participants is None:
+                self.freeze_termination_participants()
+            participants = self.termination_participants or set()
+
+        elif mode == "current_active":
+            #whose dest != None currently
+            participants = set()
+            for agent in self.agents:
+                if agent in self.vehicle_agents:
+                    dest = self.vehicle_destinations.get(agent)
+                elif agent in self.human_agents:
+                    dest = self.human_destinations.get(agent)
+                else:
+                    dest = None
+                if dest is not None:
+                    participants.add(agent)
+
+        elif mode == "all_agents":
+            participants = set(self.agents)
+
+        else:
+            raise ValueError(f"Unknown termination_mode: {mode}")
+
+
+        status = {}
+        for agent in self.agents:
+            if agent not in participants:
+                status[agent] = False
+                continue
+
+            # current dest (may change), but participant still must reach a dest
+            if agent in self.vehicle_agents:
+                dest = self.vehicle_destinations.get(agent)
+            elif agent in self.human_agents:
+                dest = self.human_destinations.get(agent)
+            else:
+                dest = None
+
+            if dest is None:
+                status[agent] = False
+                continue
+
+            pos = self.agent_positions.get(agent)
+            if hasattr(pos, "item") and not isinstance(pos, tuple):
+                pos = pos.item()
+
+            # on edge => not reached
+            if isinstance(pos, tuple):
+                status[agent] = False
+                continue
+
+            # normalize dest to set
+            if isinstance(dest, set):
+                dest_set = dest
+            elif isinstance(dest, (list, tuple)):
+                dest_set = set(dest)
+            else:
+                if hasattr(dest, "item"):
+                    dest = dest.item()
+                dest_set = {dest}
+
+            status[agent] = (pos in dest_set)
+
+        return status
+
+    def _termination_participation(self):
+        """Return whether each active agent participates in termination checks."""
+        mode = getattr(self, "termination_mode", "initial_active")
+
+        if mode == "initial_active":
+            if self.termination_participants is None:
+                self.freeze_termination_participants()
+            participants = self.termination_participants or set()
+        elif mode == "current_active":
+            participants = set()
+            for agent in self.agents:
+                if agent in self.vehicle_agents:
+                    dest = self.vehicle_destinations.get(agent)
+                elif agent in self.human_agents:
+                    dest = self.human_destinations.get(agent)
+                else:
+                    dest = None
+                if dest is not None:
+                    participants.add(agent)
+        elif mode == "all_agents":
+            participants = set(self.agents)
+        else:
+            raise ValueError(f"Unknown termination_mode: {mode}")
+
+        return {agent: agent in participants for agent in self.agents}
+
+
 
     def step(self, actions):
         """
@@ -1502,27 +1714,42 @@ class parallel_env(ParallelEnv):
             self._process_boarding_actions(actions)
         elif self.step_type == 'departing':
             self._process_departing_actions(actions)
-        
+
+
         # Automatically cycle to next step type AFTER processing current step
         step_cycle = ['routing', 'unboarding', 'boarding', 'departing']
         current_idx = step_cycle.index(self._step_type)
         self._step_type = step_cycle[(current_idx + 1) % len(step_cycle)]
         
-        # Generate observations based on scenario
-        observations = self._generate_observations()
-        
+        step_agents = list(self.agents)
+
         # All rewards are constantly zero
-        rewards = {agent: 0.0 for agent in self.agents}
-        
-        terminations = {agent: False for agent in self.agents}
-        truncations = {agent: False for agent in self.agents}
-        infos = {agent: {} for agent in self.agents}
+        rewards = {agent: 0.0 for agent in step_agents}
+
+        # Track destination reach status for diagnostics. Fixed-horizon
+        # episodes do not terminate individual agents at the env layer.
+        destination_reached = self.termination_status()
+        participation = self._termination_participation()
+
+        terminations = {agent: False for agent in step_agents}
+        truncations = {agent: False for agent in step_agents}
+        infos = {
+            agent: {
+                "termination_participant": participation.get(agent, False),
+                "destination_reached": destination_reached.get(agent, False),
+            }
+            for agent in step_agents
+        }
+
+        # Keep agents active after reaching destinations. Higher-level wrappers
+        # use max_steps to decide episode boundaries.
+        observations = self._generate_observations()
 
         # Auto-render only if render_mode is human and not currently recording
         # When recording, we want explicit control over when to capture frames
         if self.render_mode == "human" and not getattr(self, '_recording', False):
             self.render()
-            
+
         return observations, rewards, terminations, truncations, infos
     
     def _process_routing_actions(self, actions):
@@ -1533,7 +1760,6 @@ class parallel_env(ParallelEnv):
         for agent, action in actions.items():
             if agent in self.vehicle_agents:
                 pos = self.agent_positions.get(agent)
-                # Only vehicles at nodes can route
                 if pos is not None and not isinstance(pos, tuple):
                     if action == 0:
                         # Set destination to None

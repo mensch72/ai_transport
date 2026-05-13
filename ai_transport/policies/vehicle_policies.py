@@ -10,6 +10,103 @@ import networkx as nx
 from typing import Dict, Any, Optional, Tuple
 
 
+def apply_empty_vehicle_waiting(
+    is_empty: bool,
+    depart_count: int,
+    wait_cycles: int,
+    action_space_size: int
+) -> Tuple[Optional[int], int, Optional[str]]:
+    """
+    Apply waiting mechanism for empty vehicles.
+    When vehicle is empty and hasn't waited enough cycles,return wait action. Otherwise allow normal action selection.
+
+    Args:
+        is_empty: Whether vehicle is currently empty
+        depart_count: Current waiting cycle counter
+        wait_cycles: Total cycles to wait (0 = no waiting)
+        action_space_size: Size of action space (for validation)
+
+    Returns:
+        Tuple of (wait_action, updated_depart_count, wait_message)
+        - wait_action: 0 (pass) if should wait, None if should proceed
+        - updated_depart_count: New counter value
+        - wait_message: Justification string, or None if not waiting
+    """
+
+    if wait_cycles <= 0:
+        return None, depart_count, None
+
+    if not is_empty:
+        return None, 0, None
+
+    if depart_count < wait_cycles:
+        new_count = depart_count + 1
+        message = f"Waiting at node (count {new_count}/{wait_cycles})"
+        return 0, new_count, message
+
+    return None, wait_cycles, None
+
+# python
+def apply_random_edge(
+    current_node: int,
+    next_node_on_shortest_path: Optional[int],
+    action_mapping: Dict[str, Any],
+    action_space_size: int,
+    random_edge_prob: float,
+    rng: np.random.RandomState
+) -> Tuple[Optional[int], Optional[str]]:
+    """
+    Apply random edge selection noise to departing action.
+    With probability random_edge_prob, choose a random outgoing edge instead of the shortest path edge. Otherwise use shortest path.
+
+    Args:
+        current_node: Current node ID
+        next_node_on_shortest_path: Next node on shortest path (None = at destination)
+        action_mapping: Action mapping dict with 'details' key
+        action_space_size: Size of action space
+        random_edge_prob: Probability of choosing random edge (0.0 to 1.0)
+        rng: Random number generator instance
+
+    Returns:
+        Tuple of (action_idx, justification_message)
+        - action_idx: Action to take, or None if should use shortest path
+        - justification_message: Explanation string, or None
+    """
+    # No noise, use shortest path
+    if random_edge_prob <= 0:
+        return None, None
+
+    # Use shortest path (within probability)
+    if rng.random() >= random_edge_prob:
+        return None, None
+
+    # Select random outgoing edge, excluding the shortest-path edge when possible.
+    details = action_mapping.get('details', {})
+    outgoing_edges = []
+    edge_actions = []
+
+    for action_idx in range(1, action_space_size):
+        edge = details.get(action_idx)
+        if edge and isinstance(edge, tuple) and edge[0] == current_node:
+            if next_node_on_shortest_path is not None and edge[1] == next_node_on_shortest_path:
+                continue
+            outgoing_edges.append(edge)
+            edge_actions.append(action_idx)
+
+    # No outgoing edges available
+    if not outgoing_edges:
+        return None, None
+
+    # Choose random outgoing edge
+    random_idx = rng.randint(0, len(outgoing_edges))
+    chosen_edge = outgoing_edges[random_idx]
+    chosen_action = edge_actions[random_idx]
+
+    message = f"Taking random outgoing edge {chosen_edge} instead of shortest path"
+    return chosen_action, message
+
+
+
 class VehiclePolicy(ABC):
     """Abstract base class for vehicle agent policies."""
     
@@ -56,6 +153,7 @@ class RandomVehiclePolicy(VehiclePolicy):
         agent_id: str,
         pass_prob_routing: float = 0.3,
         pass_prob_departing: float = 0.2,
+        wait_cycles: int = 0,
         seed: Optional[int] = None
     ):
         """
@@ -65,12 +163,15 @@ class RandomVehiclePolicy(VehiclePolicy):
             agent_id: The ID of the agent this policy controls
             pass_prob_routing: Probability of passing (no destination) in routing step
             pass_prob_departing: Probability of passing (staying at node) in departing step
+            wait_cycles: Number of departing steps an empty vehicle waits at a node
             seed: Random seed for reproducibility
         """
         super().__init__(agent_id, seed)
         self.pass_prob_routing = pass_prob_routing
         self.pass_prob_departing = pass_prob_departing
-    
+        self.wait_cycles = wait_cycles
+        self.depart_count = 0
+
     def get_action(self, observation: Dict[str, Any], action_space_size: int):
         """
         Get random action with step-type-specific passing probability.
@@ -83,12 +184,22 @@ class RandomVehiclePolicy(VehiclePolicy):
             Tuple of (action_index, justification_string)
         """
         step_type = observation.get('step_type', 'departing')
-        
+
         # Determine pass probability based on step type
         if step_type == 'routing':
             pass_prob = self.pass_prob_routing
         elif step_type == 'departing':
             pass_prob = self.pass_prob_departing
+            human_aboard = observation.get('human_aboard', {})
+            is_empty = all(v != self.agent_id for v in human_aboard.values())
+            wait_action, self.depart_count, wait_message = apply_empty_vehicle_waiting(
+                is_empty=is_empty,
+                depart_count=self.depart_count,
+                wait_cycles=self.wait_cycles,
+                action_space_size=action_space_size
+            )
+            if wait_action is not None:
+                return wait_action, wait_message
         else:
             pass_prob = 1.0  # Always pass in unboarding/boarding
         
@@ -124,8 +235,8 @@ class RandomVehiclePolicy(VehiclePolicy):
         return action, justification
     
     def reset(self):
-        """Reset policy state (no state to reset for random policy)."""
-        pass
+        """Reset policy waiting state."""
+        self.depart_count = 0
 
 
 class ShortestPathVehiclePolicy(VehiclePolicy):
@@ -134,8 +245,7 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
     
     The vehicle:
     - Takes the fastest path to its current destination
-    - When reaching destination, chooses new destination with probability proportional
-      to Euclidean distance from current node
+    - When reaching destination, chooses new destination with probability proportional to Euclidean distance from current node
     - Uses edge speed to determine fastest path
     """
     
@@ -143,6 +253,8 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
         self,
         agent_id: str,
         network,
+        wait_cycles: int = 0,
+        random_edge_prob: float = 0.0,
         seed: Optional[int] = None
     ):
         """
@@ -155,6 +267,9 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
         """
         super().__init__(agent_id, seed)
         self.network = network
+        self.wait_cycles = wait_cycles
+        self.random_edge_prob = random_edge_prob
+        self.depart_count = 0
         self.current_destination = None
         self.nodes = list(network.nodes())
         
@@ -179,14 +294,46 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
         x1, y1 = self.node_coords.get(node1, (0, 0))
         x2, y2 = self.node_coords.get(node2, (0, 0))
         return np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
-    
-    def _choose_new_destination(self, current_node) -> Optional[int]:
+
+    def _travel_time(self, src, dst):
+        if src == dst:
+            return 0.0
+        try:
+            return nx.shortest_path_length(self.time_graph, src, dst, weight='weight')
+        except nx.NetworkXNoPath:
+            return float('inf')
+
+    def _choose_service_destination(self, current_node, aboard_humans, human_destinations):
+        best_dest = None
+        best_time = -1.0
+        for h in aboard_humans:
+            d = human_destinations.get(h)
+            if d is None:
+                continue
+            #choose a best destination if multiple are given
+            if isinstance(d, (set, list, tuple)):
+                best_d_for_h = None
+                best_dist_for_h = -1.0
+                for cand in d:
+                    dist_cand = self._euclidean_distance(current_node, cand)
+                    # choose the farthest one
+                    if np.isfinite(dist_cand) and dist_cand > best_dist_for_h:
+                        best_dist_for_h = dist_cand
+                        best_d_for_h = cand
+                d = best_d_for_h
+                dist = best_dist_for_h
+            else:
+                dist = self._euclidean_distance(current_node, d)
+            if np.isfinite(dist) and dist > best_time:
+                best_time = dist
+                best_dest = d
+        return best_dest
+
+    def _choose_cruise_destination(self, current_node) -> Optional[int]:
         """
         Choose new destination with probability proportional to distance.
-        
         Args:
             current_node: Current node ID
-            
         Returns:
             New destination node ID
         """
@@ -194,7 +341,7 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
         other_nodes = [n for n in self.nodes if n != current_node]
         if not other_nodes:
             return None
-        
+
         # Compute distances
         distances = np.array([self._euclidean_distance(current_node, n) for n in other_nodes])
         
@@ -263,18 +410,37 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
     def _get_routing_action(self, observation: Dict, action_space_size: int):
         """Set or update destination."""
         my_position = observation.get('my_position')
+        if my_position is None:
+            my_position = observation.get('agent_positions', {}).get(self.agent_id)
         action_mapping = observation.get('action_mapping', {})
         
         # If on edge, can't act
         if isinstance(my_position, tuple):
             return 0, "Passing (on edge)"
+        if my_position is None:
+            return 0, "Passing (position unavailable)"
         
         current_node = my_position
-        
+
+        human_aboard = observation.get("human_aboard", {})
+        human_destinations = observation.get("human_destinations", {})
+        aboard_humans = [h for h, v in human_aboard.items() if v == self.agent_id]
+
+
         # Check if we've reached current destination
         if self.current_destination is None or current_node == self.current_destination:
             # Choose new destination
-            self.current_destination = self._choose_new_destination(current_node)
+            if aboard_humans:
+                self.current_destination = self._choose_service_destination(
+                    current_node=current_node,
+                    aboard_humans=aboard_humans,
+                    human_destinations=human_destinations
+                )
+                if self.current_destination is None:
+                    # If human destinations are unknown, fallback to staying or cruising
+                    return 0, "Passing (passengers aboard but destinations unknown)"
+            else:
+                self.current_destination = self._choose_cruise_destination(current_node)
         
         # Find action that sets destination to our target
         if self.current_destination is not None:
@@ -289,27 +455,77 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
     
     def _get_departing_action(self, observation: Dict, action_space_size: int):
         """Choose edge on shortest path to destination."""
-        my_position = observation.get('my_position')
+        agent_positions = observation.get("agent_positions")
         action_mapping = observation.get('action_mapping', {})
-        
+        human_aboard = observation.get('human_aboard', {})
+
         # If on edge, must pass
+        my_position = observation.get('my_position')
+        if my_position is None and agent_positions is not None:
+            my_position = agent_positions.get(self.agent_id)
         if isinstance(my_position, tuple):
             return 0, "Passing (already on edge)"
-        
+        if my_position is None:
+            return 0, "Passing (position unavailable)"
         current_node = my_position
-        
-        # If no destination, pass
+
+        # If there are humans waiting at this node, do not depart yet
+        # (give the boarding step a chance to pick them up)
+        is_empty = all(v != self.agent_id for v in human_aboard.values()) #if vehicle is empty
+        if is_empty and agent_positions is not None:
+            waiting_humans = [h for h, v in human_aboard.items() if v is None]
+            humans_here = []
+            for h in waiting_humans:
+                pos = agent_positions.get(h)
+                # If the human is on an edge, pos may look like ((u, v), progress) or (u, v); in either case, they are not considered "waiting at the station".
+                if isinstance(pos, tuple):
+                    continue
+                # numpy -> python int
+                if hasattr(pos, "item"):
+                    pos = pos.item()
+                if pos == current_node:
+                    humans_here.append(h)
+
+            if humans_here:
+                self.depart_count = 0
+                return 0, f"Waiting for boarding at node {current_node}: {humans_here}"
+        # Apply empty-vehicle waiting policy (fixed number of cycles)
+        wait_action, self.depart_count, wait_message = apply_empty_vehicle_waiting(
+            is_empty=is_empty,
+            depart_count=self.depart_count,
+            wait_cycles=self.wait_cycles,
+            action_space_size=action_space_size
+        )
+        if wait_action is not None:
+            return wait_action, wait_message
+
+        # If no waiting is required, continue with the original logic
         if self.current_destination is None:
+            self.depart_count = 0
             return 0, "Passing (no destination set)"
         
         # Get next node on shortest path
         next_node = self._get_next_node_on_path(current_node, self.current_destination)
         if next_node is None:
+            self.depart_count = 0
             if current_node == self.current_destination:
                 return 0, f"Passing (already at destination {self.current_destination})"
             else:
                 return 0, f"Passing (no path to destination {self.current_destination})"
-        
+
+
+        # apply random outgoing edge noise
+        noise_action, noise_message = apply_random_edge(
+            current_node=current_node,
+            next_node_on_shortest_path=next_node,
+            action_mapping=action_mapping,
+            action_space_size=action_space_size,
+            random_edge_prob=self.random_edge_prob,
+            rng=self.rng
+        )
+        if noise_action is not None:
+            return noise_action, noise_message
+
         # Find action corresponding to edge (current_node, next_node)
         details = action_mapping.get('details', {})
         for action_idx in range(1, action_space_size):
@@ -323,3 +539,4 @@ class ShortestPathVehiclePolicy(VehiclePolicy):
     def reset(self):
         """Reset policy state (current destination)."""
         self.current_destination = None
+        self.depart_count = 0
