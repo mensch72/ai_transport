@@ -37,8 +37,8 @@ def apply_wrong_vehicle_boarding(
     if wrong_vehicle_prob <= 0 or rng.random() >= wrong_vehicle_prob:
         return best_vehicle_action, None
 
-    # Choose random vehicle from available options
-    vehicle_actions = list(available_vehicles.keys())
+    # Choose a different vehicle from available options.
+    vehicle_actions = [action for action in available_vehicles.keys() if action != best_vehicle_action]
     if not vehicle_actions:
         return best_vehicle_action, None
 
@@ -99,7 +99,8 @@ def apply_suboptimal_walking(
     action_space_size: int,
     walking_edges: Dict[int, Tuple[int, int]],
     suboptimal_walk_prob: float,
-    rng: np.random.RandomState
+    rng: np.random.RandomState,
+    best_action: Optional[int] = None
 ) -> Tuple[Optional[int], Optional[str]]:
     """
     Apply probability of walking in suboptimal direction by mistake.
@@ -113,6 +114,7 @@ def apply_suboptimal_walking(
         walking_edges: Dict mapping action_idx to (source, target) edge tuple
         suboptimal_walk_prob: Probability of suboptimal walking (0.0 to 1.0)
         rng: Random number generator instance
+        best_action: Best walking action to exclude from suboptimal candidates
 
     Returns:
         Tuple of (action_idx or None, message or None)
@@ -130,6 +132,8 @@ def apply_suboptimal_walking(
     for action_idx in range(1, action_space_size):
         edge = walking_edges.get(action_idx)
         if edge and isinstance(edge, tuple) and edge[0] == current_node:
+            if best_action is not None and action_idx == best_action:
+                continue
             outgoing_actions.append(action_idx)
             outgoing_edges.append(edge)
 
@@ -916,7 +920,8 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
             action_space_size=action_space_size,
             walking_edges=details,
             suboptimal_walk_prob=self.suboptimal_walk_prob,
-            rng=self.rng
+            rng=self.rng,
+            best_action=best_action
         )
         if subopt_msg:
             return subopt_action, subopt_msg

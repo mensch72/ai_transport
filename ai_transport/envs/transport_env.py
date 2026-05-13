@@ -204,7 +204,9 @@ class parallel_env(ParallelEnv):
         self.real_time = None
         self.agent_positions = None
         self.vehicle_destinations = None
+        self.human_destinations = None
         self.human_aboard = None  # For each human: None or vehicle ID
+        self.termination_participants = None
         self._step_type = None  # One of: 'routing', 'unboarding', 'boarding', 'departing' (private, use step_type property)
 
         # Termination modes:
@@ -255,15 +257,10 @@ class parallel_env(ParallelEnv):
         for u, v in base_edges:
             G.add_edge(u, v, length=10.0, speed=5.0, capacity=10)
 
-        # Randomly make some cycle edges bidirectional to add variety
-        try:
-            rng = np.random.RandomState(None)
-            for u, v in base_edges:
-                if rng.random() < 0.5 and not G.has_edge(v, u):
-                    G.add_edge(v, u, length=G[u][v]['length'], speed=G[u][v]['speed'], capacity=G[u][v]['capacity'])
-        except Exception:
-            # Fallback: keep cycle only (still strongly connected)
-            pass
+        # Deterministically make selected cycle edges bidirectional to add variety.
+        for u, v in base_edges[:2]:
+            if not G.has_edge(v, u):
+                G.add_edge(v, u, length=G[u][v]['length'], speed=G[u][v]['speed'], capacity=G[u][v]['capacity'])
 
         return G
     
@@ -1478,7 +1475,7 @@ class parallel_env(ParallelEnv):
         - 'details': specific IDs/objects that each action index refers to
         """
         if self.step_type is None or agent not in self.agents:
-            return {'description': {0: 'pass'}, 'details': {}}
+            return {'description': {0: 'pass'}, 'details': {0: None}}
         
         mapping = {'description': {}, 'details': {}}
         
