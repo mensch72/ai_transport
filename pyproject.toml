@@ -6,6 +6,17 @@ build-backend = "setuptools.build_meta"
 name = "ai_transport_accessibility_equity"
 version = "0.1.0"
 description = "Placeholder project for accessibility- and equity-oriented RL built on ai_transport."
+dependencies = [
+    "matplotlib>=3.10.9",
+    "networkx>=3.6.1",
+    "pettingzoo>=1.26.1",
+    "scipy>=1.17.1",
+    "shapely>=2.1.2",
+    "stable-baselines3[extra]>=2.8.0",
+]
 
 [tool.pytest.ini_options]
 addopts = "-p no:cacheprovider"
+
+[tool.uv]
+package = false
