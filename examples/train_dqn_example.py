@@ -25,6 +25,7 @@ from accessibility_equity.policies import HeuristicRoutingHumanPolicy
 from accessibility_equity.rewards import compute_scenario_utility_bounds
 from accessibility_equity.visualization import render_episode_frame_array, save_scenario_figure
 from accessibility_equity.wrappers import REWARD_SCALE, create_dqn_env
+from accessibility_equity.heuristics import TSPVehicleAgent
 
 try:
     from accessibility_equity.algorithms import MaskedDQN as DQN
@@ -251,6 +252,8 @@ def _select_action(policy_name, model, env, obs):
             action_masks=env.action_masks(),
         )
         return int(action)
+    if policy_name == "tsp":
+        return model.get_action(obs)
     if policy_name == "random":
         return int(env.action_space.sample())
     if policy_name == "always_pass":
@@ -380,6 +383,8 @@ def _run_policy_episode(
         monitor=False,
         render_mode=None,
     )
+    if policy_name == 'tsp':
+        model = TSPVehicleAgent(env)
     obs, _info = env.reset(seed=seed)
     terminated = False
     truncated = False
@@ -489,7 +494,7 @@ def evaluate_model(model, episodes=3, seed=100):
     emit("=" * 70)
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    policy_names = ["dqn", "random", "always_pass"]
+    policy_names = ["dqn", "random", "always_pass", "tsp"]
     replay_writer = None
     replay_video_path = None
     if SAVE_DECISION_REPLAY_VIDEO:
