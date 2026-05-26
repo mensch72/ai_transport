@@ -18,6 +18,7 @@ from accessibility_equity.visualization import (
     save_scenario_figure,
 )
 from accessibility_equity.wrappers import REWARD_SCALE, create_transport_env
+from accessibility_equity.wrappers import REWARD_SCALE, create_dqn_env
 from accessibility_equity.heuristics import TSPVehicleAgent
 
 EXPERIMENT_CONFIG = DEFAULT_EXPERIMENT_CONFIG
@@ -30,7 +31,7 @@ NUM_VEHICLES = SCENARIO_CONFIG.num_vehicles
 NUM_NODES = SCENARIO_CONFIG.num_nodes
 
 
-env = create_transport_env(
+env = create_dqn_env(
     num_humans=NUM_HUMANS,
     num_vehicles=NUM_VEHICLES,
     num_nodes=NUM_NODES,
@@ -39,10 +40,10 @@ env = create_transport_env(
     render_mode="human",
 )
 
-env.env.start_video_recording()
+env.base_env.env.start_video_recording()
 
 obs, info = env.reset()
-env.env.enable_rendering("graphical")
+env.base_env.env.enable_rendering("graphical")
 
 tsp_agent = TSPVehicleAgent(env)
 
@@ -50,6 +51,6 @@ for _ in range(100):
     action = tsp_agent.get_action(obs)
     print(action)
     obs, reward, terminated, truncated, info = env.step(action)
-    env.env.render()
+    env.base_env.env.render()
 
-env.env.save_video("test.mp4", fps=5)
+env.base_env.env.save_video("test.mp4", fps=5)
