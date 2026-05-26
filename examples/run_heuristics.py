@@ -36,16 +36,20 @@ env = create_transport_env(
     num_nodes=NUM_NODES,
     human_policy_class=HeuristicRoutingHumanPolicy,
     seed=0,
-    render_mode = 'human',
+    render_mode="human",
 )
-env.env.enable_rendering()
+
+env.env.start_video_recording()
+
+obs, info = env.reset()
+env.env.enable_rendering("graphical")
 
 tsp_agent = TSPVehicleAgent(env)
 
-obs, info = env.reset()
 for _ in range(100):
     action = tsp_agent.get_action(obs)
     print(action)
     obs, reward, terminated, truncated, info = env.step(action)
-    env.render()
+    env.env.render()
 
+env.env.save_video("test.mp4", fps=5)
