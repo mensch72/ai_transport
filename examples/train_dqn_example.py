@@ -521,7 +521,7 @@ def evaluate_model(model, episodes=3, seed=100):
                     policy_name=policy_name,
                     model=model,
                     episode_index=episode,
-                    seed=seed + episode,
+                    seed=seed,
                     print_step_details=(episode == 0),
                     detail_steps=8,
                     replay_writer=replay_writer if policy_name == "dqn" else None,
@@ -685,7 +685,7 @@ def main():
     evaluate_model(
         model,
         episodes=DEFAULT_EVAL_EPISODES,
-        seed=DEFAULT_EVAL_SEED,
+        seed=SCENARIO_CONFIG.seed,
     )
 
 
