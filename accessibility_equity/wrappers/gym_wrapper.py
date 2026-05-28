@@ -144,7 +144,7 @@ class TransportGymWrapper(gym.Env):
         self.last_boarding_debug_records: List[Dict[str, Any]] = []
         self.step_count = 0
 
-        self.action_space = spaces.MultiDiscrete([42] * num_vehicles)
+        self.action_space = spaces.MultiDiscrete([num_nodes + 1] * num_vehicles)
         self.observation_space = spaces.Dict({
             "step_type": spaces.Discrete(4),
             "real_time": spaces.Box(low=0, high=np.inf, shape=(1,), dtype=np.float32),

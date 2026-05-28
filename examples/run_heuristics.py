@@ -49,7 +49,6 @@ tsp_agent = TSPVehicleAgent(env)
 
 for _ in range(100):
     action = tsp_agent.get_action(obs)
-    print(action)
     obs, reward, terminated, truncated, info = env.step(action)
     env.base_env.env.render()
 

@@ -11,6 +11,10 @@ from pathlib import Path
 import re
 import sys
 
+import hydra
+from hydra.core.hydra_config import HydraConfig
+from omegaconf import DictConfig, OmegaConf
+
 import matplotlib
 
 matplotlib.use("Agg")
@@ -73,17 +77,6 @@ def _allocate_experiment_dir(root):
     return root / f"experiment_{next_number:03d}{suffix}"
 
 
-OUTPUT_DIR = _allocate_experiment_dir(OUTPUT_ROOT)
-MODEL_DIR = OUTPUT_DIR / "models"
-VIDEO_DIR = OUTPUT_DIR / "videos"
-SCENARIO_IMAGE_PATH = OUTPUT_DIR / "scenario.png"
-LOG_PATH = OUTPUT_DIR / "evaluation_summary.txt"
-EVALUATION_EPISODES_SUMMARY_CSV_PATH = OUTPUT_DIR / "evaluation_episodes_summary.csv"
-TRAIN_MONITOR_PATH = OUTPUT_DIR / "train.monitor.csv"
-TRAIN_CURVE_PATH = OUTPUT_DIR / "training_reward_curve.png"
-DECISION_REPLAY_VIDEO_PATH = VIDEO_DIR / "dqn_decision_replay_all_episodes.mp4"
-MODEL_PATH = MODEL_DIR / "accessibility_equity_dqn_single_vehicle"
-CONFIG_PATH = OUTPUT_DIR / "config.json"
 SAVE_MODEL = DQN_CONFIG.save_model
 DEFAULT_MAX_STEPS = DQN_CONFIG.max_steps
 DEFAULT_EVAL_EPISODES = DQN_CONFIG.eval_episodes
@@ -96,45 +89,47 @@ SAVE_DECISION_REPLAY_VIDEO = DQN_CONFIG.save_decision_replay_video
 DECISION_REPLAY_FPS = DQN_CONFIG.decision_replay_fps
 
 
-def make_env(seed=None, monitor=True, render_mode=None):
+def make_env(cfg, output_dir, seed=None, monitor=True, render_mode=None):
     """
     Create a small single-vehicle environment for DQN smoke training.
     """
+    train_monitor_path = output_dir / "train.monitor.csv"
+
     env = create_dqn_env(
-        num_humans=NUM_HUMANS,
-        num_vehicles=NUM_VEHICLES,
-        num_nodes=NUM_NODES,
+        num_humans=cfg.scenario.num_humans,
+        num_vehicles=cfg.scenario.num_vehicles,
+        num_nodes=cfg.scenario.num_nodes,
         seed=seed,
-        human_speeds=[MOBILITY_CONFIG.human_walking_speed_kmh] * NUM_HUMANS,
-        vehicle_speeds=[MOBILITY_CONFIG.vehicle_speed_kmh] * NUM_VEHICLES,
+        human_speeds=[cfg.mobility.human_walking_speed_kmh] * cfg.scenario.num_humans,
+        vehicle_speeds=[cfg.mobility.vehicle_speed_kmh] * cfg.scenario.num_vehicles,
         human_policy_class=HeuristicRoutingHumanPolicy,
         human_policy_kwargs={"p_wait": 0.5},
-        network_kwargs={"speed_mean": MOBILITY_CONFIG.edge_speed_kmh},
-        poi_kwargs=SCENARIO_CONFIG.poi_kwargs,
-        reward_config=REWARD_CONFIG,
-        mobility_config=MOBILITY_CONFIG,
-        max_steps=DEFAULT_MAX_STEPS,
+        network_kwargs={"speed_mean": cfg.mobility.edge_speed_kmh},
+        reward_config=cfg.reward,
+        mobility_config=cfg.mobility,
+        max_steps=cfg.dqn.max_steps,
         render_mode=render_mode,
         use_action_masking=True,
-        decision_mode=DECISION_MODE,
+        decision_mode=cfg.dqn.decision_mode,
     )
     if monitor:
-        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        return Monitor(env, filename=str(TRAIN_MONITOR_PATH))
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return Monitor(env, filename=str(train_monitor_path))
     return env
 
 
-def save_training_scenario_diagnostics():
+def save_training_scenario_diagnostics(cfg, output_dir):
     """
     Save the exact configured scenario picture for this training run.
     """
-    preview_env = make_env(seed=SCENARIO_CONFIG.seed, monitor=False, render_mode=None)
+    scenario_image_path = output_dir / "scenario.png"
+    preview_env = make_env(cfg, output_dir, seed=cfg.scenario.seed, monitor=False, render_mode=None)
     try:
         scenario = preview_env.base_env.scenario
         utility_bounds = compute_scenario_utility_bounds(
             graph=scenario.network,
-            population_size=SCENARIO_CONFIG.num_humans,
-            reward_config=REWARD_CONFIG,
+            population_size=cfg.scenario.num_humans,
+            reward_config=cfg.reward,
         )
         footer_lines = [
             (
@@ -149,13 +144,13 @@ def save_training_scenario_diagnostics():
         ]
         save_scenario_figure(
             scenario,
-            SCENARIO_IMAGE_PATH,
+            scenario_image_path,
             show_node_labels=True,
             show_edge_length_table=True,
             footer_lines=footer_lines,
             utility_bounds=utility_bounds,
         )
-        print(f"Scenario image saved to '{SCENARIO_IMAGE_PATH}'")
+        print(f"Scenario image saved to '{scenario_image_path}'")
     finally:
         preview_env.close()
 
@@ -607,86 +602,95 @@ def evaluate_model(model, episodes=3, seed=100):
     print(f"Evaluation summary saved to '{LOG_PATH}'")
     print(f"Evaluation episode summary CSV saved to '{EVALUATION_EPISODES_SUMMARY_CSV_PATH}'")
 
-
-def main():
+@hydra.main(config_path='../config', config_name='train')
+def main(cfg: DictConfig):
     """
     Run a small DQN training job.
     """
+    output_dir = Path(HydraConfig.get().runtime.output_dir)
+    model_dir = output_dir / "models"
+    video_dir = output_dir / "videos"
+    scenario_image_path = output_dir / "scenario.png"
+    log_path = output_dir / "evaluation_summary.txt"
+    evaluation_episodes_summary_csv_path = output_dir / "evaluation_episodes_summary.csv"
+    train_monitor_path = output_dir / "train.monitor.csv"
+    train_curve_path = output_dir / "training_reward_curve.png"
+    decision_replay_video_path = video_dir / "dqn_decision_replay_all_episodes.mp4"
+    model_path = model_dir / "accessibility_equity_dqn_single_vehicle"
+
     print("=" * 70)
     print("Training DQN for Single-Vehicle Accessibility-Equity Control")
-    print(f"Decision mode: {DECISION_MODE}")
-    print(f"Scenario: humans={NUM_HUMANS}, vehicles={NUM_VEHICLES}, nodes={NUM_NODES}")
+    print(f"Decision mode: {cfg.dqn.decision_mode}")
+    print(f"Scenario: humans={cfg.scenario.num_humans}, vehicles={cfg.scenario.num_vehicles}, nodes={cfg.scenario.num_nodes}")
     print(
         "Scenario config: "
-        f"seed={SCENARIO_CONFIG.seed}, "
-        f"central_count={SCENARIO_CONFIG.central_count}"
+        f"seed={cfg.scenario.seed}, "
+        f"central_count={cfg.scenario.central_count}"
     )
     print(
         "Mobility config: "
-        f"human={MOBILITY_CONFIG.human_walking_speed_kmh:g} km/h, "
-        f"vehicle={MOBILITY_CONFIG.vehicle_speed_kmh:g} km/h, "
-        f"edge={MOBILITY_CONFIG.edge_speed_kmh:g} km/h"
+        f"human={cfg.mobility.human_walking_speed_kmh:g} km/h, "
+        f"vehicle={cfg.mobility.vehicle_speed_kmh:g} km/h, "
+        f"edge={cfg.mobility.edge_speed_kmh:g} km/h"
     )
     print(
         "Reward config: "
-        f"utility_mode={REWARD_CONFIG.utility_mode}, "
-        f"beta={REWARD_CONFIG.beta:g}, alpha={REWARD_CONFIG.alpha:g}, "
-        f"xi={REWARD_CONFIG.xi:g}, eta={REWARD_CONFIG.eta:g}, "
-        f"normalize_utility={REWARD_CONFIG.normalize_utility}, "
-        f"clip_normalized_utility={REWARD_CONFIG.clip_normalized_utility}, "
-        f"normalized_reward_scale={REWARD_CONFIG.normalized_reward_scale:g}"
+        f"utility_mode={cfg.reward.utility_mode}, "
+        f"beta={cfg.reward.beta:g}, alpha={cfg.reward.alpha:g}, "
+        f"xi={cfg.reward.xi:g}, eta={cfg.reward.eta:g}, "
+        f"normalize_utility={cfg.reward.normalize_utility}, "
+        f"clip_normalized_utility={cfg.reward.clip_normalized_utility}, "
+        f"normalized_reward_scale={cfg.reward.normalized_reward_scale:g}"
     )
     print(
         "DQN output config: "
-        f"save_model={DQN_CONFIG.save_model}, "
-        f"save_decision_replay_video={DQN_CONFIG.save_decision_replay_video}, "
-        f"decision_replay_fps={DQN_CONFIG.decision_replay_fps}"
+        f"save_model={cfg.dqn.save_model}, "
+        f"save_decision_replay_video={cfg.dqn.save_decision_replay_video}, "
+        f"decision_replay_fps={cfg.dqn.decision_replay_fps}"
     )
-    print(f"Output directory: {OUTPUT_DIR}")
+    print(f"Output directory: {output_dir}")
     print(f"NOTE: DQN rewards are scaled by REWARD_SCALE={REWARD_SCALE:g}.")
     print("      Monitor curves and scaled_reward logs are not raw rewards.")
     print("=" * 70)
 
-    save_experiment_config(EXPERIMENT_CONFIG, CONFIG_PATH)
-    print(f"Resolved config saved to '{CONFIG_PATH}'")
-    save_training_scenario_diagnostics()
-    if TRAIN_MONITOR_PATH.exists():
-        TRAIN_MONITOR_PATH.unlink()
-    env = make_env(seed=SCENARIO_CONFIG.seed, monitor=True, render_mode=None)
+    save_training_scenario_diagnostics(cfg, output_dir)
+    if train_monitor_path.exists():
+        train_monitor_path.unlink()
+    env = make_env(cfg, output_dir, seed=cfg.scenario.seed, monitor=True, render_mode=None)
 
     model = DQN(
         "MultiInputPolicy",
         env,
         verbose=1,
-        learning_rate=DQN_CONFIG.learning_rate,
-        buffer_size=DQN_CONFIG.buffer_size,
-        learning_starts=DQN_CONFIG.learning_starts,
-        batch_size=DQN_CONFIG.batch_size,
-        gamma=DQN_CONFIG.gamma,
-        train_freq=DQN_CONFIG.train_freq,
-        target_update_interval=DQN_CONFIG.target_update_interval,
-        exploration_fraction=DQN_CONFIG.exploration_fraction,
-        exploration_final_eps=DQN_CONFIG.exploration_final_eps,
+        learning_rate=cfg.dqn.learning_rate,
+        buffer_size=cfg.dqn.buffer_size,
+        learning_starts=cfg.dqn.learning_starts,
+        batch_size=cfg.dqn.batch_size,
+        gamma=cfg.dqn.gamma,
+        train_freq=cfg.dqn.train_freq,
+        target_update_interval=cfg.dqn.target_update_interval,
+        exploration_fraction=cfg.dqn.exploration_fraction,
+        exploration_final_eps=cfg.dqn.exploration_final_eps,
     )
 
-    model.learn(total_timesteps=TOTAL_TIMESTEPS, progress_bar=True)
-    if SAVE_MODEL:
-        MODEL_DIR.mkdir(parents=True, exist_ok=True)
-        model.save(MODEL_PATH)
+    model.learn(total_timesteps=cfg.dqn.total_timesteps, progress_bar=True)
+    if cfg.dqn.save_model:
+        model_dir.mkdir(parents=True, exist_ok=True)
+        model.save(model_path)
     env.close()
-    plot_training_rewards(TRAIN_MONITOR_PATH, TRAIN_CURVE_PATH)
-    if TRAIN_MONITOR_PATH.exists():
-        TRAIN_MONITOR_PATH.unlink()
-    if SAVE_MODEL:
-        print(f"Model saved to '{MODEL_PATH.with_suffix('.zip')}'")
+    plot_training_rewards(train_monitor_path, train_curve_path)
+    if train_monitor_path.exists():
+        train_monitor_path.unlink()
+    if cfg.dqn.save_model:
+        print(f"Model saved to '{model_path.with_suffix('.zip')}'")
     else:
         print("Model file not saved (SAVE_MODEL=False).")
 
-    evaluate_model(
-        model,
-        episodes=DEFAULT_EVAL_EPISODES,
-        seed=SCENARIO_CONFIG.seed,
-    )
+    # evaluate_model(
+    #     model,
+    #     episodes=DEFAULT_EVAL_EPISODES,
+    #     seed=SCENARIO_CONFIG.seed,
+    # )
 
 
 if __name__ == "__main__":

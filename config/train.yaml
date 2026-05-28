@@ -1,0 +1,43 @@
+scenario:
+  num_nodes: 6
+  num_humans: 10
+  num_vehicles: 1
+  seed: 42
+  central_count: 1
+
+mobility:
+  human_walking_speed_kmh: 3.0
+  vehicle_speed_kmh: 30.0
+  edge_speed_kmh: 30.0
+
+reward:
+  utility_mode: "equity"
+  beta: 1.0
+  alpha: 0.8
+  xi: 1.0
+  eta: 2.0
+  epsilon: 1e-6
+  reward_mode: "time_integrated_utility"
+  normalize_utility: False
+  clip_normalized_utility: False
+  normalized_reward_scale: 100
+
+dqn:
+  decision_mode: "routing"
+  output_run_name: None
+  max_steps: 100
+  eval_episodes: 10
+  eval_seed: 42
+  save_model: True
+  total_timesteps: 20_000
+  learning_rate: 1e-4
+  buffer_size: 50_000
+  learning_starts: 1_000
+  batch_size: 32
+  gamma: 0.99
+  train_freq: 4
+  target_update_interval: 1_000
+  exploration_fraction: 0.2
+  exploration_final_eps: 0.05
+  save_decision_replay_video: False
+  decision_replay_fps: 2  
