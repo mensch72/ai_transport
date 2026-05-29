@@ -24,8 +24,7 @@ def make_env(cfg, output_dir=None, seed=None, monitor=True, render_mode=None):
     Create a small single-vehicle environment for DQN smoke training.
     """
     if monitor and output_dir is None:
-        raise ValueError("output_dir is required when moitor=True")
-    train_monitor_path = output_dir / "train.monitor.csv"
+        raise ValueError("output_dir is required when monitor=True")
 
     env = create_dqn_env(
         num_humans=cfg.env.scenario.num_humans,
@@ -45,6 +44,7 @@ def make_env(cfg, output_dir=None, seed=None, monitor=True, render_mode=None):
         decision_mode=cfg.dqn.decision_mode,
     )
     if monitor:
+        train_monitor_path = output_dir / "train.monitor.csv"
         output_dir.mkdir(parents=True, exist_ok=True)
         return Monitor(env, filename=str(train_monitor_path))
     return env
