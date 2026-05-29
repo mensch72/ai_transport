@@ -1,0 +1,6 @@
+defaults:
+  - env: default
+  - _self_
+
+save_decision_replay_video: False
+decision_replay_fps: 2
