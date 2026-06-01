@@ -1,6 +1,7 @@
 import functools
 from typing import Optional, Union, Tuple, Dict, Any
 import os
+import logging
 
 import gymnasium
 import numpy as np
@@ -13,6 +14,8 @@ from pettingzoo import ParallelEnv
 from pettingzoo.utils import parallel_to_aec, wrappers
 
 from accessibility_equity.config import DEFAULT_EXPERIMENT_CONFIG
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_NUM_HUMANS = DEFAULT_EXPERIMENT_CONFIG.scenario.num_humans
 DEFAULT_NUM_VEHICLES = DEFAULT_EXPERIMENT_CONFIG.scenario.num_vehicles
@@ -1797,6 +1800,8 @@ class parallel_env(ParallelEnv):
                         nodes = list(self.network.nodes())
                         if 1 <= action <= len(nodes):
                             self.vehicle_destinations[agent] = nodes[action - 1]
+                        else:
+                            logger.debug("Invalid routing action: %s not in range 0,...,%s.", action, len(nodes))
     
     def _process_unboarding_actions(self, actions):
         """
@@ -1812,6 +1817,8 @@ class parallel_env(ParallelEnv):
                     if vehicle_pos is not None and not isinstance(vehicle_pos, tuple):
                         if action == 1:  # action 0 is pass, action 1 is unboard
                             self.human_aboard[agent] = None
+                        elif action != 0:
+                            logger.debug("Invalid unboarding action: %s is not 0 or 1.", action)
     
     def _process_boarding_actions(self, actions):
         """
@@ -1839,6 +1846,8 @@ class parallel_env(ParallelEnv):
                     if 0 <= vehicle_idx < len(vehicles_at_node):
                         chosen_vehicle = vehicles_at_node[vehicle_idx]
                         boarding_requests.append((agent, chosen_vehicle))
+                    elif action != 0:
+                        logger.debug("Invalid boarding action: %s not in range 1,...,%s.", action, len(vehicles_at_node))
         
         # Process boarding requests in random order
         if boarding_requests:
@@ -1896,6 +1905,10 @@ class parallel_env(ParallelEnv):
                             aboard = self.human_aboard.get(agent)
                             if aboard is None:
                                 self.agent_positions[agent] = (chosen_edge, 0.0)
+                    else:
+                        logger.debug("Invalid departing action: %s greater than %s", action, len(outgoing_edges))
+            elif action != 0:
+                logger.debug("Invalid departing action: %s less than 0", action)
         
         # Now compute movement for all agents on edges
         # Find minimum remaining duration on edges

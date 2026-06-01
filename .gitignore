@@ -18,6 +18,9 @@ uv.lock
 .vscode/
 
 outputs/
+multirun/
 *.mp4
 *.zip
+*.svg
 
+*.prof
