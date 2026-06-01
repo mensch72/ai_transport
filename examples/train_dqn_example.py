@@ -104,7 +104,7 @@ def main(cfg: DictConfig):
         model_dir.mkdir(parents=True, exist_ok=True)
         model.save(model_path)
     env.close()
-    plot_training_rewards(train_monitor_path, train_curve_path)
+    plot_training_rewards(cfg, train_monitor_path, train_curve_path)
     if train_monitor_path.exists():
         train_monitor_path.unlink()
     if cfg.dqn.save_model:

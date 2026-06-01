@@ -18,6 +18,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from accessibility_equity.algorithms import MaskedDQN as DQN
 from accessibility_equity.visualization import render_episode_frame_array
 from accessibility_equity.wrappers import REWARD_SCALE
 from accessibility_equity.heuristics import TSPVehicleAgent
@@ -257,7 +258,7 @@ def _run_policy_episode(
     }
 
 
-def evaluate_model(cfg, output_dir, model, episodes=3, seed=100):
+def evaluate_model(cfg, output_dir, model):
     """
     Run policy comparison after training.
     """
@@ -307,13 +308,13 @@ def evaluate_model(cfg, output_dir, model, episodes=3, seed=100):
             invalid_action_count = 0
             total_action_count = 0
 
-            for episode in range(episodes):
+            for episode in range(cfg.episodes):
                 result = _run_policy_episode(
                     cfg=cfg,
                     policy_name=policy_name,
                     model=model,
                     episode_index=episode,
-                    seed=seed,
+                    seed=cfg.env.scenario.seed,
                     print_step_details=(episode == 0),
                     detail_steps=8,
                     replay_writer=replay_writer if policy_name == "dqn" else None,
@@ -398,3 +399,22 @@ def evaluate_model(cfg, output_dir, model, episodes=3, seed=100):
         writer.writerows(episode_summary_rows)
     print(f"Evaluation summary saved to '{log_path}'")
     print(f"Evaluation episode summary CSV saved to '{evaluation_episodes_summary_csv_path}'")
+
+@hydra.main(config_path='../config', config_name='eval')
+def main(cfg: DictConfig):
+    output_dir = Path(cfg.model_dir)
+
+    # Reuse the exact env/dqn config the model was trained with so the
+    # evaluation environment matches the trained model. Hydra saved this
+    # config when the training run was executed.
+    train_cfg = OmegaConf.load(output_dir / ".hydra" / "config.yaml")
+    cfg = OmegaConf.merge(train_cfg, cfg)
+
+    model_path = output_dir / 'models' / f'{cfg.model_filename}.zip'
+    model = DQN.load(model_path)
+    print(f"Loaded model from '{model_path}'")
+
+    evaluate_model(cfg, output_dir=output_dir, model=model)
+
+if __name__ == "__main__":
+    main()

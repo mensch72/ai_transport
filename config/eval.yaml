@@ -1,6 +1,16 @@
 defaults:
-  - env: default
   - _self_
 
+model_dir: ???
+model_filename: accessibility_equity_dqn_single_vehicle
+
+episodes: 3
 save_decision_replay_video: False
 decision_replay_fps: 2
+
+hydra:
+  job:
+    chdir: False
+  output_subdir: null
+  run:
+    dir: ${model_dir}
