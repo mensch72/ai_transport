@@ -785,8 +785,18 @@ class parallel_env(ParallelEnv):
         # Import needed modules
         from matplotlib.transforms import Affine2D
         import matplotlib.pyplot as plt
+        from accessibility_equity.visualization.video_display import (
+            compute_human_accessibility_values,
+            reset_dynamic_labels,
+            update_human_overlay,
+            update_passenger_overlay,
+            update_summary_overlay,
+            update_vehicle_overlay,
+        )
         
         pos = self._network_pos
+        accessibility_values = compute_human_accessibility_values(self)
+        reset_dynamic_labels(self)
         
         # Update vehicle artists
         for vehicle in self.vehicle_agents:
@@ -848,6 +858,7 @@ class parallel_env(ParallelEnv):
             t = Affine2D().rotate_deg_around(x, y, rotation_angle) + self.ax.transData
             artist.set_transform(t)
             artist.set_visible(True)
+            update_vehicle_overlay(self, vehicle, (x, y))
             
             # Update passengers inside vehicle
             passengers = [h for h in self.human_agents if self.human_aboard.get(h) == vehicle]
@@ -868,6 +879,7 @@ class parallel_env(ParallelEnv):
                         passenger_artist.set_visible(True)
                     else:
                         passenger_artist.set_visible(False)
+            update_passenger_overlay(self, vehicle, passengers)
             
             # Update destination arc for vehicle
             dest = self.vehicle_destinations.get(vehicle)
@@ -955,6 +967,7 @@ class parallel_env(ParallelEnv):
             
             artist.set_center((x, y))
             artist.set_visible(True)
+            update_human_overlay(self, human, (x, y), accessibility_values)
         
         # Update title
         if title is not None:
@@ -962,6 +975,7 @@ class parallel_env(ParallelEnv):
         else:
             self.ax.set_title(f'Transport Network - Time: {self.real_time:.2f}, Step: {self.step_type}',
                              fontsize=14, fontweight='bold')
+        update_summary_overlay(self, accessibility_values, title=title)
         
         # Draw canvas
         if self.fig is not None:
@@ -1087,11 +1101,20 @@ class parallel_env(ParallelEnv):
             self.ax.set_xlim(min(x_vals) - x_margin, max(x_vals) + x_margin)
             self.ax.set_ylim(min(y_vals) - y_margin, max(y_vals) + y_margin)
         
-        # Draw static network (nodes and edges)
-        self._draw_static_network()
+        # Draw static background. If a scenario is attached, use the
+        # scenario-aware display layer; otherwise keep the original network
+        # fallback so standalone env usage still works.
+        from accessibility_equity.visualization.video_display import (
+            draw_scenario_background,
+            initialize_video_display_artists,
+        )
+
+        if not draw_scenario_background(self):
+            self._draw_static_network()
         
         # Initialize artists for agents (vehicles and humans)
         self._initialize_agent_artists()
+        initialize_video_display_artists(self)
         
         self._artists_initialized = True
     
@@ -1240,7 +1263,7 @@ class parallel_env(ParallelEnv):
                         writer.append_data(frame)
                     
                     writer.close()
-                    print(f"✓ Video saved to {filename} ({len(self.frames)} frames)")
+                    print(f"Video saved to {filename} ({len(self.frames)} frames)")
                     return
                     
                 except Exception as e:
@@ -1263,7 +1286,7 @@ class parallel_env(ParallelEnv):
                 duration=duration_ms,
                 loop=0
             )
-            print(f"✓ Video saved as GIF to {filename} ({len(self.frames)} frames)")
+            print(f"Video saved as GIF to {filename} ({len(self.frames)} frames)")
             
         except Exception as e:
             print(f"Error saving video: {e}")

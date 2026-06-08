@@ -83,8 +83,6 @@ class DQNConfig:
     target_update_interval: int = 1_000
     exploration_fraction: float = 0.2
     exploration_final_eps: float = 0.05
-    save_decision_replay_video: bool = False
-    decision_replay_fps: int = 2
 
 
 @dataclass(frozen=True)
@@ -176,8 +174,7 @@ def load_experiment_config_from_env() -> ExperimentConfig:
         AE_DQN_TOTAL_TIMESTEPS, AE_DQN_LEARNING_RATE, AE_DQN_BUFFER_SIZE,
         AE_DQN_LEARNING_STARTS, AE_DQN_BATCH_SIZE, AE_DQN_GAMMA,
         AE_DQN_TRAIN_FREQ, AE_DQN_TARGET_UPDATE_INTERVAL,
-        AE_DQN_EXPLORATION_FRACTION, AE_DQN_EXPLORATION_FINAL_EPS,
-        AE_DQN_SAVE_DECISION_REPLAY_VIDEO, AE_DQN_DECISION_REPLAY_FPS
+        AE_DQN_EXPLORATION_FRACTION, AE_DQN_EXPLORATION_FINAL_EPS
     """
     defaults = ExperimentConfig()
     scenario = ScenarioConfig(
@@ -253,14 +250,6 @@ def load_experiment_config_from_env() -> ExperimentConfig:
         exploration_final_eps=_read_float_env(
             "AE_DQN_EXPLORATION_FINAL_EPS",
             defaults.dqn.exploration_final_eps,
-        ),
-        save_decision_replay_video=_read_bool_env(
-            "AE_DQN_SAVE_DECISION_REPLAY_VIDEO",
-            defaults.dqn.save_decision_replay_video,
-        ),
-        decision_replay_fps=_read_int_env(
-            "AE_DQN_DECISION_REPLAY_FPS",
-            defaults.dqn.decision_replay_fps,
         ),
     )
     return ExperimentConfig(
