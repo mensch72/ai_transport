@@ -19,7 +19,7 @@ from accessibility_equity.visualization import save_scenario_figure
 from stable_baselines3.common.monitor import Monitor
 
 
-def make_env(cfg, output_dir=None, seed=None, monitor=True, render_mode=None):
+def make_env(cfg, output_dir=None, seed=None, monitor=True, render_mode=None, reward_function=None):
     """
     Create a small single-vehicle environment for DQN smoke training.
     """
@@ -42,6 +42,7 @@ def make_env(cfg, output_dir=None, seed=None, monitor=True, render_mode=None):
         render_mode=render_mode,
         use_action_masking=True,
         decision_mode=cfg.dqn.decision_mode,
+        reward_function=reward_function
     )
     if monitor:
         train_monitor_path = output_dir / "train.monitor.csv"

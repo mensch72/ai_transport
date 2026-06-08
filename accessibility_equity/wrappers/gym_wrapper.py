@@ -317,7 +317,7 @@ class TransportGymWrapper(gym.Env):
             )
         return records
 
-    def _default_reward_function(self, obs_dict: Dict, actions_dict: Dict) -> Dict[str, float]:
+    def _default_reward_function(self, obs_dict: Dict, actions_dict: Dict, current_time=None, next_time=None) -> Dict[str, float]:
         """
         Default reward function based on route-induced accessibility and equity utility.
 
@@ -329,7 +329,7 @@ class TransportGymWrapper(gym.Env):
 
         where ``delta_t`` is measured in hours.
         """
-        _ = obs_dict, actions_dict
+        _ = obs_dict, actions_dict, current_time, next_time
 
         if self._current_reward_state is None or self._next_reward_state is None:
             return {agent: 0.0 for agent in self.vehicle_agents}
@@ -442,7 +442,7 @@ class TransportGymWrapper(gym.Env):
             human_to_node[human] = human_node
 
             aboard = self.env.human_aboard.get(human)
-            if aboard is not None:
+            if False and aboard is not None:
                 route_nodes = self._get_vehicle_route_nodes(aboard)
             else:
                 route_nodes = [human_node]
@@ -513,7 +513,12 @@ class TransportGymWrapper(gym.Env):
         self._next_reward_state = self._extract_reward_state()
         self._next_reward_time = float(self.env.real_time)
 
-        vehicle_rewards = self.reward_function(obs_dict, actions_dict)
+        vehicle_rewards = self.reward_function(
+            obs_dict, 
+            actions_dict, 
+            self._next_reward_time,
+            self._current_reward_time
+        )
         reward = sum(vehicle_rewards.get(agent, 0.0) for agent in self.vehicle_agents)
         terminated = False
         truncated = self.step_count >= self.max_steps

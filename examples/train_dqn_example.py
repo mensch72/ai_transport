@@ -24,6 +24,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from accessibility_equity.wrappers import REWARD_SCALE
+from accessibility_equity.rewards.efficient_equity_reward import EquityReward
 
 
 try:
@@ -81,8 +82,29 @@ def main(cfg: DictConfig):
     save_training_scenario_diagnostics(cfg, output_dir)
     if train_monitor_path.exists():
         train_monitor_path.unlink()
-    env = make_env(cfg, output_dir=output_dir, seed=cfg.env.scenario.seed, monitor=True, render_mode=None)
 
+    equity_reward = EquityReward(
+        cfg.env.reward.beta, 
+        cfg.env.reward.alpha,
+        cfg.env.reward.xi,
+        cfg.env.reward.eta,
+    )
+
+
+    env = make_env(
+        cfg, 
+        output_dir=output_dir, 
+        seed=cfg.env.scenario.seed, 
+        monitor=True, 
+        render_mode=None,
+        reward_function=equity_reward.reward
+    )
+
+    equity_reward.initialize(
+        env.env.base_env.env.network,
+        env.env.base_env.vehicle_agents,
+        env.env.base_env.human_agents
+    )
 
     model = DQN(
         "MultiInputPolicy",
@@ -92,7 +114,7 @@ def main(cfg: DictConfig):
         buffer_size=cfg.dqn.buffer_size,
         learning_starts=cfg.dqn.learning_starts,
         batch_size=cfg.dqn.batch_size,
-        gamma=cfg.dqn.gamma,
+        gamma= cfg.dqn.gamma,
         train_freq=cfg.dqn.train_freq,
         target_update_interval=cfg.dqn.target_update_interval,
         exploration_fraction=cfg.dqn.exploration_fraction,
