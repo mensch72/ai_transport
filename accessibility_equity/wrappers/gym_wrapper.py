@@ -490,9 +490,9 @@ class TransportGymWrapper(gym.Env):
         self._current_reward_state = self._extract_reward_state()
         self._current_reward_time = float(self.env.real_time)
 
-        obs_dict = self.env._generate_observations()
-        self._update_human_goals(obs_dict)
-        human_actions = self._get_human_actions(obs_dict)
+        current_obs_dict = self.env._generate_observations()
+        self._update_human_goals(current_obs_dict)
+        human_actions = self._get_human_actions(current_obs_dict)
         if self.env.step_type == "boarding":
             self.last_boarding_debug_records = self._build_boarding_debug_records(human_actions)
 
@@ -514,7 +514,7 @@ class TransportGymWrapper(gym.Env):
         self._next_reward_time = float(self.env.real_time)
 
         vehicle_rewards = self.reward_function(
-            obs_dict, 
+            current_obs_dict, 
             actions_dict, 
             self._next_reward_time,
             self._current_reward_time

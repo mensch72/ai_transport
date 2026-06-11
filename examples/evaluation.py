@@ -22,6 +22,7 @@ from accessibility_equity.algorithms import MaskedDQN as DQN
 from accessibility_equity.visualization import render_episode_frame_array
 from accessibility_equity.wrappers import REWARD_SCALE
 from accessibility_equity.heuristics import TSPVehicleAgent
+from accessibility_equity.rewards.efficient_equity_reward import EquityReward
 
 
 def _select_action(policy_name, model, env, obs):
@@ -162,12 +163,26 @@ def _run_policy_episode(
     """
     Run one evaluation episode for a named policy.
     """
+    equity_reward = EquityReward(
+        cfg.env.reward.beta,
+        cfg.env.reward.alpha,
+        cfg.env.reward.xi,
+        cfg.env.reward.eta,
+        cfg.env.mobility.human_walking_speed_kmh,
+        cfg.env.mobility.vehicle_speed_kmh)
     env = make_env(
         cfg,
         seed=seed,
         monitor=False,
         render_mode=None,
+        reward_function=equity_reward.reward
     )
+    equity_reward.initialize(
+        env.base_env.env.network,
+        env.base_env.vehicle_agents,
+        env.base_env.human_agents
+    )
+
     if policy_name == 'tsp':
         model = TSPVehicleAgent(env)
     obs, _info = env.reset(seed=seed)

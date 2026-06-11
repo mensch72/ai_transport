@@ -88,6 +88,8 @@ def main(cfg: DictConfig):
         cfg.env.reward.alpha,
         cfg.env.reward.xi,
         cfg.env.reward.eta,
+        cfg.env.mobility.human_walking_speed_kmh,
+        cfg.env.mobility.vehicle_speed_kmh,
     )
 
 
