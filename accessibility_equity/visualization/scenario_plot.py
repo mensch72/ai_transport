@@ -446,6 +446,8 @@ def _finalize_axes(fig, ax, title, bottom_margin=0.05):
     ax.set_ylabel("y")
     ax.set_aspect("equal", adjustable="box")
     ax.grid(True, color="#e5e7eb", linewidth=0.6)
+    for spine in ax.spines.values():
+        spine.set_visible(False)
     fig.tight_layout(rect=(0, bottom_margin, 1, 1))
 
 

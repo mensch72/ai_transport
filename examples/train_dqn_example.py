@@ -6,7 +6,10 @@ a single discrete action. Multi-vehicle DQN needs a separate action design.
 """
 
 from collections import Counter
+import cProfile
 import csv
+import importlib.util
+import pstats
 from pathlib import Path
 import re
 import sys
@@ -87,6 +90,8 @@ TRAIN_MONITOR_PATH = OUTPUT_DIR / "train.monitor.csv"
 TRAIN_CURVE_PATH = OUTPUT_DIR / "training_reward_curve.png"
 MODEL_PATH = MODEL_DIR / "accessibility_equity_dqn_single_vehicle"
 CONFIG_PATH = OUTPUT_DIR / "config.json"
+PROFILE_PATH = OUTPUT_DIR / "profile.prof"
+PROFILE_SUMMARY_PATH = OUTPUT_DIR / "profile_top.txt"
 SAVE_MODEL = DQN_CONFIG.save_model
 DEFAULT_MAX_STEPS = DQN_CONFIG.max_steps
 DEFAULT_EVAL_EPISODES = DQN_CONFIG.eval_episodes
@@ -139,23 +144,12 @@ def save_training_scenario_diagnostics():
             population_size=SCENARIO_CONFIG.num_humans,
             reward_config=REWARD_CONFIG,
         )
-        footer_lines = [
-            (
-                "Utility bounds without time: "
-                f"lower={utility_bounds['utility_lower_bound']:.3g} "
-                f"uses X_h={utility_bounds['min_accessibility']:.3f} "
-                f"from node {utility_bounds['min_accessibility_node']}; "
-                f"upper={utility_bounds['utility_upper_bound']:.3g} "
-                f"uses X_h={utility_bounds['max_accessibility']:.3f} "
-                f"from node {utility_bounds['max_accessibility_node']}"
-            )
-        ]
         save_scenario_figure(
             scenario,
             SCENARIO_IMAGE_PATH,
             show_node_labels=True,
-            show_edge_length_table=True,
-            footer_lines=footer_lines,
+            show_edge_length_table=False,
+            footer_lines=None,
             utility_bounds=utility_bounds,
         )
         print(f"Scenario image saved to '{SCENARIO_IMAGE_PATH}'")
@@ -230,14 +224,22 @@ def plot_training_rewards(monitor_path, output_path):
     print(f"Training reward curve saved to '{output_path}'")
 
 
+def _tensorboard_log_dir():
+    if importlib.util.find_spec("tensorboard") is None:
+        print("TensorBoard is not installed; skipping TensorBoard logging.")
+        print("Install later with: pip install tensorboard")
+        return None
+    return str(OUTPUT_DIR)
+
+
 def _utility_legend_label(reward_config):
     utility_mode = reward_config.utility_mode
     if utility_mode == "sum_accessibility":
         formula = r"$U(s_t)=\sum_h X_h(s_t)$"
     elif utility_mode == "equity":
         formula = (
-            rf"$U(s_t)=-(\sum_h \max(X_h(s_t),{reward_config.epsilon:g})^"
-            rf"{{-{reward_config.xi:g}}})^{{{reward_config.eta:g}}}$"
+            rf"$U(s_t)=-(\sum_h X_h(s_t)^{{-{reward_config.xi:g}}})"
+            rf"^{{{reward_config.eta:g}}}$"
         )
     else:
         formula = "unknown utility formula"
@@ -565,7 +567,8 @@ def main():
     print(
         "DQN output config: "
         f"save_model={DQN_CONFIG.save_model}, "
-        f"eval_video_episodes={DEFAULT_EVAL_VIDEO_EPISODES}"
+        f"eval_video_episodes={DEFAULT_EVAL_VIDEO_EPISODES}, "
+        f"profile_enabled={DQN_CONFIG.profile_enabled}"
     )
     print(f"Output directory: {OUTPUT_DIR}")
     print(f"NOTE: DQN rewards are scaled by REWARD_SCALE={REWARD_SCALE:g}.")
@@ -578,11 +581,13 @@ def main():
     if TRAIN_MONITOR_PATH.exists():
         TRAIN_MONITOR_PATH.unlink()
     env = make_env(seed=SCENARIO_CONFIG.seed, monitor=True, render_mode=None)
+    tensorboard_log = _tensorboard_log_dir()
 
     model = DQN(
         "MultiInputPolicy",
         env,
         verbose=1,
+        tensorboard_log=tensorboard_log,
         learning_rate=DQN_CONFIG.learning_rate,
         buffer_size=DQN_CONFIG.buffer_size,
         learning_starts=DQN_CONFIG.learning_starts,
@@ -594,7 +599,10 @@ def main():
         exploration_final_eps=DQN_CONFIG.exploration_final_eps,
     )
 
-    model.learn(total_timesteps=TOTAL_TIMESTEPS, progress_bar=True)
+    model.learn(
+        total_timesteps=TOTAL_TIMESTEPS,
+        progress_bar=True,
+    )
     if SAVE_MODEL:
         MODEL_DIR.mkdir(parents=True, exist_ok=True)
         model.save(MODEL_PATH)
@@ -616,5 +624,25 @@ def main():
     )
 
 
+def run_with_optional_profiling() -> None:
+    if not DQN_CONFIG.profile_enabled:
+        main()
+        return
+
+    profiler = cProfile.Profile()
+    profiler.enable()
+    try:
+        main()
+    finally:
+        profiler.disable()
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        profiler.dump_stats(str(PROFILE_PATH))
+        with PROFILE_SUMMARY_PATH.open("w", encoding="utf-8") as handle:
+            stats = pstats.Stats(profiler, stream=handle)
+            stats.strip_dirs().sort_stats("cumtime").print_stats(50)
+        print(f"Profiling data saved to '{PROFILE_PATH}'")
+        print(f"Profiling summary saved to '{PROFILE_SUMMARY_PATH}'")
+
+
 if __name__ == "__main__":
-    main()
+    run_with_optional_profiling()

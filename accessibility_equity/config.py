@@ -69,11 +69,11 @@ class RewardConfig:
 class DQNConfig:
     decision_mode: str = "routing"
     output_run_name: Optional[str] = None
-    max_steps: int = 100
+    max_steps: int = 200
     eval_episodes: int = 10
     eval_seed: int = 42
     save_model: bool = True
-    total_timesteps: int = 20_000
+    total_timesteps: int = 200_000
     learning_rate: float = 1e-4
     buffer_size: int = 50_000
     learning_starts: int = 1_000
@@ -83,6 +83,7 @@ class DQNConfig:
     target_update_interval: int = 1_000
     exploration_fraction: float = 0.2
     exploration_final_eps: float = 0.05
+    profile_enabled: bool = False
 
 
 @dataclass(frozen=True)
@@ -250,6 +251,10 @@ def load_experiment_config_from_env() -> ExperimentConfig:
         exploration_final_eps=_read_float_env(
             "AE_DQN_EXPLORATION_FINAL_EPS",
             defaults.dqn.exploration_final_eps,
+        ),
+        profile_enabled=_read_bool_env(
+            "AE_DQN_PROFILE_ENABLED",
+            defaults.dqn.profile_enabled,
         ),
     )
     return ExperimentConfig(

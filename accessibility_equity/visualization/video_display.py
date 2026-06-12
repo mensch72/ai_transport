@@ -8,18 +8,21 @@ labels, and vehicle decision annotations.
 
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import networkx as nx
 import numpy as np
 
 from accessibility_equity.rewards.accessibility import compute_population_accessibility
 from accessibility_equity.visualization.scenario_plot import (
     AREA_COLORS,
+    CAR_MARKER,
     HOUSE_MARKER,
     POI_MARKERS,
     REGION_COLORS,
@@ -48,17 +51,16 @@ def configure_video_axes(env: Any) -> None:
         return
     env.ax.set_aspect("equal")
     env.ax.axis("off")
+    env.ax.margins(0.16)
+    env.ax.autoscale_view()
 
-    pos = getattr(env, "_network_pos", None) or {}
-    if not pos:
-        return
-    x_vals = [float(point[0]) for point in pos.values()]
-    y_vals = [float(point[1]) for point in pos.values()]
-    span_x = max(x_vals) - min(x_vals) if x_vals else 1.0
-    span_y = max(y_vals) - min(y_vals) if y_vals else 1.0
-    margin = 0.08 * max(span_x, span_y) + 0.5
-    env.ax.set_xlim(min(x_vals) - margin, max(x_vals) + margin)
-    env.ax.set_ylim(min(y_vals) - margin, max(y_vals) + margin)
+    x_min, x_max = env.ax.get_xlim()
+    y_min, y_max = env.ax.get_ylim()
+    span_x = max(x_max - x_min, 1.0)
+    span_y = max(y_max - y_min, 1.0)
+    pad = 0.08 * max(span_x, span_y)
+    env.ax.set_xlim(x_min - pad, x_max + pad)
+    env.ax.set_ylim(y_min - pad, y_max + pad)
 
 
 def draw_scenario_background(env: Any, scenario: Any = None) -> bool:
@@ -88,11 +90,10 @@ def initialize_video_display_artists(env: Any) -> None:
     """Initialize optional text artists used by the video overlay."""
     env._human_label_artists = {}
     env._vehicle_label_artists = {}
-    env._video_summary_artist = env.ax.text(
+    env._video_summary_artist = env.fig.text(
         0.015,
-        0.985,
+        0.975,
         "",
-        transform=env.ax.transAxes,
         ha="left",
         va="top",
         fontsize=9,
@@ -106,6 +107,7 @@ def initialize_video_display_artists(env: Any) -> None:
         },
         zorder=20,
     )
+    env._video_legend = _build_video_legend(env)
 
     for human in env.human_agents:
         env._human_label_artists[human] = env.ax.text(
@@ -282,15 +284,138 @@ def update_summary_overlay(
         state = human_display_state(env, human)
         moving_counts[state] = moving_counts.get(state, 0) + 1
 
-    header = title or f"t={env.real_time:.2f}, step={env.step_type}"
     summary_artist.set_text(
-        f"{header}\n"
-        "human colors: gray=waiting, orange=moving, purple=riding\n"
         f"{accessibility_text}\n"
         f"humans: waiting={moving_counts.get('waiting', 0)}, "
         f"moving={moving_counts.get('moving', 0)}, "
         f"riding={moving_counts.get('riding', 0)}"
     )
+
+
+def initialize_accessibility_histogram(env: Any) -> None:
+    """Prepare fixed histogram bins for per-human accessibility values."""
+    hist_ax = getattr(env, "hist_ax", None)
+    if hist_ax is None:
+        return
+
+    x_min, x_max = _compute_accessibility_histogram_bounds(env)
+    env._accessibility_hist_x_min = x_min
+    env._accessibility_hist_x_max = x_max
+    env._accessibility_hist_bins = np.linspace(x_min, x_max, 11)
+    env._accessibility_hist_y_max = max(1, len(getattr(env, "human_agents", [])))
+
+    hist_ax.clear()
+    _format_accessibility_histogram_axis(env)
+
+
+def update_accessibility_histogram(
+    env: Any,
+    accessibility_values: Mapping[str, float],
+) -> None:
+    """Draw the current population distribution of X_h on the video side panel."""
+    hist_ax = getattr(env, "hist_ax", None)
+    if hist_ax is None:
+        return
+
+    values = np.asarray(list(accessibility_values.values()), dtype=float)
+    values = values[np.isfinite(values)]
+
+    hist_ax.clear()
+    bins = getattr(env, "_accessibility_hist_bins", None)
+    if bins is None:
+        initialize_accessibility_histogram(env)
+        bins = getattr(env, "_accessibility_hist_bins", None)
+
+    if bins is not None and values.size:
+        hist_ax.hist(
+            values,
+            bins=bins,
+            color="#2563eb",
+            edgecolor="#ffffff",
+            linewidth=0.8,
+            alpha=0.82,
+        )
+        mean_value = float(np.mean(values))
+        median_value = float(np.median(values))
+        hist_ax.axvline(
+            mean_value,
+            color="#dc2626",
+            linewidth=1.6,
+            label=f"mean={mean_value:.2f}",
+        )
+        hist_ax.axvline(
+            median_value,
+            color="#7c3aed",
+            linewidth=1.3,
+            linestyle="--",
+            label=f"median={median_value:.2f}",
+        )
+        hist_ax.legend(loc="upper right", fontsize=7, frameon=False)
+    else:
+        hist_ax.text(
+            0.5,
+            0.5,
+            "X unavailable",
+            ha="center",
+            va="center",
+            transform=hist_ax.transAxes,
+            fontsize=10,
+            color="#6b7280",
+        )
+
+    _format_accessibility_histogram_axis(env)
+
+
+def _compute_accessibility_histogram_bounds(env: Any) -> Tuple[float, float]:
+    """Compute fixed X_h bounds from node-based accessibility values."""
+    reward_config = getattr(env, "reward_config", None)
+    beta = None if reward_config is None else getattr(reward_config, "beta", None)
+    gamma = None if reward_config is None else getattr(reward_config, "alpha", None)
+    node_values = []
+    for node in getattr(env, "network", nx.DiGraph()).nodes():
+        kwargs = {
+            "graph": env.network,
+            "human_to_node": {"human": node},
+            "human_to_route": {"human": [node]},
+        }
+        if beta is not None:
+            kwargs["beta"] = beta
+        if gamma is not None:
+            kwargs["gamma"] = gamma
+        result = compute_population_accessibility(**kwargs)
+        value = result.get("individual_values", {}).get("human")
+        if value is not None and math.isfinite(float(value)):
+            node_values.append(float(value))
+
+    if not node_values:
+        return 0.0, 1.0
+
+    x_min = min(node_values)
+    x_max = max(node_values)
+    if math.isclose(x_min, x_max):
+        padding = max(abs(x_min) * 0.05, 0.5)
+    else:
+        padding = 0.06 * (x_max - x_min)
+    return max(0.0, x_min - padding), x_max + padding
+
+
+def _format_accessibility_histogram_axis(env: Any) -> None:
+    hist_ax = getattr(env, "hist_ax", None)
+    if hist_ax is None:
+        return
+
+    hist_ax.set_title("Population $X_h$", fontsize=11, fontweight="bold")
+    hist_ax.set_xlabel("$X_h$", fontsize=9)
+    hist_ax.set_ylabel("humans", fontsize=9)
+    hist_ax.set_xlim(
+        getattr(env, "_accessibility_hist_x_min", 0.0),
+        getattr(env, "_accessibility_hist_x_max", 1.0),
+    )
+    hist_ax.set_ylim(0, getattr(env, "_accessibility_hist_y_max", 1))
+    hist_ax.grid(axis="y", color="#e5e7eb", linewidth=0.7)
+    hist_ax.tick_params(axis="both", labelsize=8)
+    for spine in ("top", "right"):
+        hist_ax.spines[spine].set_visible(False)
 
 
 def reset_dynamic_labels(env: Any) -> None:
@@ -576,6 +701,7 @@ def render_single_frame(
             fontweight="bold",
         )
     update_summary_overlay(env, accessibility_values, title=title)
+    update_accessibility_histogram(env, accessibility_values)
 
     if env.fig is not None:
         env.fig.canvas.draw()
@@ -610,12 +736,21 @@ def initialize_artists(env: Any) -> None:
         print("matplotlib is required for graphical rendering")
         return
 
-    if env.fig is None or env.ax is None:
-        env.fig, env.ax = plt.subplots(figsize=(12, 10))
+    if env.fig is None or env.ax is None or not hasattr(env, "hist_ax"):
+        if env.fig is not None:
+            plt.close(env.fig)
+        env.fig, (env.ax, env.hist_ax) = plt.subplots(
+            1,
+            2,
+            figsize=(14, 8),
+            dpi=150,
+            gridspec_kw={"width_ratios": [2.25, 1.0]},
+        )
 
-    env.fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+    env.fig.subplots_adjust(left=0.035, right=0.985, top=0.82, bottom=0.08, wspace=0.18)
 
     env.ax.clear()
+    env.hist_ax.clear()
     env.ax.set_aspect("equal")
     env.ax.axis("off")
 
@@ -643,6 +778,7 @@ def initialize_artists(env: Any) -> None:
 
     initialize_agent_artists(env)
     initialize_video_display_artists(env)
+    initialize_accessibility_histogram(env)
 
     env._artists_initialized = True
 
@@ -880,25 +1016,190 @@ def _draw_voronoi_regions(ax: Any, graph: nx.DiGraph) -> None:
 def _draw_light_network(ax: Any, graph: nx.DiGraph, pos: Mapping[Any, Tuple[float, float]]) -> None:
     from matplotlib.lines import Line2D
 
-    drawn = set()
+    xs = [float(point[0]) for point in pos.values()]
+    ys = [float(point[1]) for point in pos.values()]
+    span_x = max(xs) - min(xs) if xs else 1.0
+    span_y = max(ys) - min(ys) if ys else 1.0
+    twin_offset = max(0.0025 * max(span_x, span_y), 0.025)
+
+    drawn_two_way = set()
     for u, v in graph.edges():
+        if u == v:
+            continue
         if u not in pos or v not in pos:
             continue
-        key = frozenset((u, v))
-        if key in drawn:
-            continue
-        drawn.add(key)
+        is_two_way = graph.has_edge(v, u)
+        if is_two_way:
+            edge_key = frozenset((u, v))
+            if edge_key in drawn_two_way:
+                continue
+            drawn_two_way.add(edge_key)
+
         x1, y1 = pos[u]
         x2, y2 = pos[v]
-        line = Line2D(
-            [x1, x2],
-            [y1, y2],
-            color="#94a3b8",
-            linewidth=0.55,
-            alpha=0.26,
-            zorder=1,
+        dx = x2 - x1
+        dy = y2 - y1
+        length = math.hypot(dx, dy)
+        if length <= 1e-9:
+            continue
+
+        normal_x = -dy / length
+        normal_y = dx / length
+
+        if is_two_way:
+            for direction_sign in (-1.0, 1.0):
+                offset_x = normal_x * twin_offset * direction_sign
+                offset_y = normal_y * twin_offset * direction_sign
+                line = Line2D(
+                    [x1 + offset_x, x2 + offset_x],
+                    [y1 + offset_y, y2 + offset_y],
+                    color="#4b5563",
+                    linewidth=0.62,
+                    alpha=0.62,
+                    zorder=2,
+                    solid_capstyle="round",
+                )
+                ax.add_line(line)
+        else:
+            line = Line2D(
+                [x1, x2],
+                [y1, y2],
+                color="#6b7280",
+                linewidth=0.65,
+                alpha=0.35,
+                zorder=2,
+                solid_capstyle="round",
+            )
+            ax.add_line(line)
+
+    if xs and ys:
+        ax.scatter(xs, ys, s=18, color="#374151", alpha=0.78, zorder=6)
+        for node, (x, y) in pos.items():
+            ax.text(
+                x,
+                y,
+                str(node),
+                fontsize=8,
+                fontweight="bold",
+                color="#111827",
+                ha="center",
+                va="center",
+                zorder=9,
+                bbox={
+                    "boxstyle": "circle,pad=0.18",
+                    "facecolor": "white",
+                    "edgecolor": "#374151",
+                    "linewidth": 0.45,
+                    "alpha": 0.9,
+                },
+            )
+
+
+def _build_video_legend(env: Any) -> Any:
+    scenario = get_video_scenario(env)
+    poi_distribution = getattr(scenario, "poi_distribution", {}) if scenario is not None else {}
+
+    legend_handles = [
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="w",
+            markerfacecolor=HUMAN_STATE_STYLES["waiting"]["facecolor"],
+            markeredgecolor=HUMAN_STATE_STYLES["waiting"]["edgecolor"],
+            markersize=6,
+            label="waiting human",
+        ),
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="w",
+            markerfacecolor=HUMAN_STATE_STYLES["moving"]["facecolor"],
+            markeredgecolor=HUMAN_STATE_STYLES["moving"]["edgecolor"],
+            markersize=6,
+            label="moving human",
+        ),
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="w",
+            markerfacecolor=HUMAN_STATE_STYLES["riding"]["facecolor"],
+            markeredgecolor=HUMAN_STATE_STYLES["riding"]["edgecolor"],
+            markersize=6,
+            label="riding human",
+        ),
+        Line2D(
+            [0],
+            [0],
+            marker=CAR_MARKER,
+            color="w",
+            markerfacecolor=VEHICLE_FACE_COLOR,
+            markeredgecolor=VEHICLE_EDGE_COLOR,
+            markersize=9,
+            label=f"vehicle (n={len(env.vehicle_agents)})",
+        ),
+        Line2D(
+            [0],
+            [0],
+            marker=HOUSE_MARKER,
+            color="w",
+            markerfacecolor=AREA_COLORS["residential"],
+            markeredgecolor="#3f2a12",
+            markersize=8,
+            label="residential place",
+        ),
+    ]
+
+    for level, color in REGION_COLORS.items():
+        legend_handles.append(
+            Line2D(
+                [0],
+                [0],
+                marker="s",
+                color="w",
+                markerfacecolor=color,
+                markeredgecolor="#ffffff",
+                markersize=7,
+                label=f"{level} region",
+            )
         )
-        ax.add_line(line)
+
+    records = poi_distribution.get("poi_records", []) if poi_distribution else []
+    available_poi_types = {record.get("poi_type") for record in records}
+    for poi_type, marker in POI_MARKERS.items():
+        if records and poi_type not in available_poi_types:
+            continue
+        legend_handles.append(
+            Line2D(
+                [0],
+                [0],
+                marker=marker,
+                color="w",
+                markerfacecolor=AREA_COLORS[poi_type],
+                markeredgecolor="#111827",
+                markersize=7,
+                label=poi_type,
+            )
+        )
+
+    legend = env.fig.legend(
+        handles=legend_handles,
+        loc="upper right",
+        bbox_to_anchor=(0.988, 0.985),
+        fontsize=7,
+        frameon=True,
+        ncol=2,
+        borderaxespad=0.0,
+        handlelength=1.2,
+        columnspacing=0.8,
+        labelspacing=0.35,
+    )
+    legend.get_frame().set_edgecolor("#d1d5db")
+    legend.get_frame().set_linewidth(0.6)
+    legend.get_frame().set_alpha(0.88)
+    return legend
 
 
 def _draw_residential_places(ax: Any, poi_distribution: Mapping[str, Any]) -> None:
