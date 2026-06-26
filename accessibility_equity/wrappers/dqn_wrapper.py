@@ -342,29 +342,66 @@ class DQNTransportWrapper(gym.Env):
                 break
         return self._format_observation(obs), self._add_action_mask_info(info)
 
+    def _macro_step_reward(self, decision_obs: Dict[str, Any], decision_time: float) -> float:
+        """
+        Reward the current DQN macro-step once over its full duration.
+
+        A single DQN decision is followed by the wrapper auto-advancing through
+        several underlying environment sub-steps until the next decision point.
+        The route-based reward function scales the decision-point utility ``U``
+        by the time-discount factor ``(1 - gamma**delta_t) / -ln(gamma)``.
+        Evaluating it once for the full elapsed ``Delta_t`` (``decision_time``
+        -> current ``real_time``) yields ``U * (1 - gamma**Delta_t)/-ln(gamma)``,
+        which is exactly consistent with the ``gamma**Delta_t`` bootstrap used in
+        ``MaskedDQN.train``.
+
+        Summing a separate ``(1 - gamma**delta_t_i)`` factor per sub-step instead
+        (each discounted from its own start) approximates the *undiscounted* time
+        integral and systematically over-penalizes longer trips, biasing the
+        policy toward always routing to the nearest node.
+
+        ``actions_dict`` is unused by the route-based reward functions, so an
+        empty mapping is passed.
+        """
+        next_time = float(self.base_env.env.real_time)
+        vehicle_rewards = self.base_env.reward_function(
+            decision_obs, {}, next_time, decision_time
+        )
+        if not isinstance(vehicle_rewards, dict):
+            return float(vehicle_rewards)
+        return sum(
+            float(vehicle_rewards.get(agent, 0.0))
+            for agent in self.base_env.vehicle_agents
+        )
+
     def step(self, action: int):
+        # Snapshot the decision-point state and time. The whole macro-step (this
+        # decision plus the wrapper's internal auto-advance to the next decision
+        # point) is rewarded a single time over its full duration in
+        # ``_macro_step_reward`` rather than by summing one reward per underlying
+        # sub-step; see that method for why per-sub-step summation is
+        # inconsistent with training's ``gamma**delta_t`` bootstrap.
+        decision_obs = self.base_env.env._generate_observations()
+        decision_time = float(self.base_env.env.real_time)
+
         if self.use_action_masking:
             action = int(action)
             pre_step_mask = self.action_masks()
             action_was_valid = 0 <= action < self.action_space.n and bool(pre_step_mask[action])
             underlying_action = self._masked_node_action_to_underlying_action(int(action))
-            raw_reward = 0.0
-            accumulated_reward = 0.0
             boarding_debug_records = []
-            obs, reward, terminated, truncated, info = self.base_env.step(
+            obs, _reward, terminated, truncated, info = self.base_env.step(
                 np.asarray([underlying_action], dtype=np.int64)
             )
-            accumulated_reward += float(reward)
             if self.base_env.last_boarding_debug_records:
                 boarding_debug_records.extend(self.base_env.last_boarding_debug_records)
             self._render_auto_advance_frame()
 
             guard = 1
             while not (terminated or truncated) and not self._at_dqn_decision_point() and guard < 1000:
-                obs, reward, terminated, truncated, info = self.base_env.step(
+                obs, _reward, terminated, truncated, info = self.base_env.step(
                     np.asarray([self._auto_vehicle_action_between_decisions()], dtype=np.int64)
                 )
-                accumulated_reward += float(reward)
                 if self.base_env.last_boarding_debug_records:
                     for record in self.base_env.last_boarding_debug_records:
                         enriched_record = dict(record)
@@ -376,7 +413,7 @@ class DQNTransportWrapper(gym.Env):
             if guard >= 1000:
                 truncated = True
 
-            raw_reward = accumulated_reward
+            raw_reward = self._macro_step_reward(decision_obs, decision_time)
             scaled_reward = float(raw_reward) * REWARD_SCALE
             info = self._add_action_mask_info(info)
             info["raw_reward"] = float(raw_reward)
@@ -400,7 +437,6 @@ class DQNTransportWrapper(gym.Env):
         routing_action: Optional[int] = int(action)
         target_destination = self._action_to_destination(routing_action)
         raw_reward = 0.0
-        accumulated_reward = 0.0
         terminated = False
         truncated = False
         info: Dict[str, Any] = {}
@@ -431,8 +467,7 @@ class DQNTransportWrapper(gym.Env):
                 ],
                 dtype=np.int64,
             )
-            obs, reward, terminated, truncated, info = self.base_env.step(vehicle_action)
-            accumulated_reward += float(reward)
+            obs, _reward, terminated, truncated, info = self.base_env.step(vehicle_action)
             if self.base_env.last_boarding_debug_records:
                 for record in self.base_env.last_boarding_debug_records:
                     enriched_record = dict(record)
@@ -455,7 +490,7 @@ class DQNTransportWrapper(gym.Env):
         if guard >= 1000:
             truncated = True
 
-        raw_reward = accumulated_reward
+        raw_reward = self._macro_step_reward(decision_obs, decision_time)
         scaled_reward = raw_reward * REWARD_SCALE
         info = dict(info)
         info["raw_reward"] = raw_reward

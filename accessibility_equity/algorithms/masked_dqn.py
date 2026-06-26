@@ -181,7 +181,12 @@ class MaskedDQN(DQN):
                 batch_size,
                 env=self._vec_normalize_env,
             )
-            discounts = replay_data.discounts if replay_data.discounts is not None else self.gamma
+
+            t      = replay_data.observations["features"][:, 1:2] 
+            t_next = replay_data.next_observations["features"][:, 1:2]
+            delta_t = (t_next - t).clamp(min=0.0)
+
+            discounts = replay_data.discounts if replay_data.discounts is not None else self.gamma**delta_t
 
             with th.no_grad():
                 next_q_values = self.q_net_target(replay_data.next_observations)

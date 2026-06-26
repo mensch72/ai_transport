@@ -5,7 +5,7 @@ defaults:
 dqn:
   decision_mode: "routing"
   output_run_name: null
-  max_steps: 100
+  max_steps: 10
   eval_episodes: 10
   eval_seed: 42
   save_model: True

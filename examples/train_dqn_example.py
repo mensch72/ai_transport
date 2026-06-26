@@ -26,7 +26,6 @@ if str(PROJECT_ROOT) not in sys.path:
 from accessibility_equity.wrappers import REWARD_SCALE
 from accessibility_equity.rewards.efficient_equity_reward import EquityReward
 
-
 try:
     from accessibility_equity.algorithms import MaskedDQN as DQN
 except ImportError:
@@ -35,7 +34,7 @@ except ImportError:
     raise SystemExit(1)
 
 
-@hydra.main(config_path='../config', config_name='train')
+@hydra.main(config_path="../config", config_name="train")
 def main(cfg: DictConfig):
     """
     Run a small DQN training job.
@@ -49,7 +48,9 @@ def main(cfg: DictConfig):
     print("=" * 70)
     print("Training DQN for Single-Vehicle Accessibility-Equity Control")
     print(f"Decision mode: {cfg.dqn.decision_mode}")
-    print(f"Scenario: humans={cfg.env.scenario.num_humans}, vehicles={cfg.env.scenario.num_vehicles}, nodes={cfg.env.scenario.num_nodes}")
+    print(
+        f"Scenario: humans={cfg.env.scenario.num_humans}, vehicles={cfg.env.scenario.num_vehicles}, nodes={cfg.env.scenario.num_nodes}"
+    )
     print(
         "Scenario config: "
         f"seed={cfg.env.scenario.seed}, "
@@ -70,42 +71,40 @@ def main(cfg: DictConfig):
         f"clip_normalized_utility={cfg.env.reward.clip_normalized_utility}, "
         f"normalized_reward_scale={cfg.env.reward.normalized_reward_scale:g}"
     )
-    print(
-        "DQN output config: "
-        f"save_model={cfg.dqn.save_model}, "
-    )
+    print("DQN output config: " f"save_model={cfg.dqn.save_model}, ")
     print(f"Output directory: {output_dir}")
     print(f"NOTE: DQN rewards are scaled by REWARD_SCALE={REWARD_SCALE:g}.")
     print("      Monitor curves and scaled_reward logs are not raw rewards.")
     print("=" * 70)
 
-    save_training_scenario_diagnostics(cfg, output_dir)
     if train_monitor_path.exists():
         train_monitor_path.unlink()
 
     equity_reward = EquityReward(
-        cfg.env.reward.beta, 
+        cfg.env.reward.beta,
         cfg.env.reward.alpha,
         cfg.env.reward.xi,
         cfg.env.reward.eta,
+        cfg.dqn.gamma,
         cfg.env.mobility.human_walking_speed_kmh,
         cfg.env.mobility.vehicle_speed_kmh,
     )
 
-
     env = make_env(
-        cfg, 
-        output_dir=output_dir, 
-        seed=cfg.env.scenario.seed, 
-        monitor=True, 
+        cfg,
+        output_dir=output_dir,
+        seed=cfg.env.scenario.seed,
+        monitor=True,
         render_mode=None,
-        reward_function=equity_reward.reward
+        reward_function=equity_reward.reward,
     )
+
+    save_training_scenario_diagnostics(env.env, output_dir)
 
     equity_reward.initialize(
         env.env.base_env.env.network,
         env.env.base_env.vehicle_agents,
-        env.env.base_env.human_agents
+        env.env.base_env.human_agents,
     )
 
     model = DQN(
@@ -116,7 +115,7 @@ def main(cfg: DictConfig):
         buffer_size=cfg.dqn.buffer_size,
         learning_starts=cfg.dqn.learning_starts,
         batch_size=cfg.dqn.batch_size,
-        gamma= cfg.dqn.gamma,
+        gamma=cfg.dqn.gamma,
         train_freq=cfg.dqn.train_freq,
         target_update_interval=cfg.dqn.target_update_interval,
         exploration_fraction=cfg.dqn.exploration_fraction,

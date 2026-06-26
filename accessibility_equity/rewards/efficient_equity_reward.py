@@ -5,11 +5,12 @@ from scipy.sparse.csgraph import floyd_warshall
 
 
 class EquityReward:
-    def __init__(self, beta, alpha, xi, eta, human_speed, vehicle_speed, epsilon=1e-6):
+    def __init__(self, beta, alpha, xi, eta, gamma, human_speed, vehicle_speed, epsilon=1e-6):
         self.beta = beta
         self.alpha = alpha
         self.xi = xi
         self.eta = eta
+        self.gamma = gamma
         self.human_speed = human_speed
         self.vehicle_speed = vehicle_speed
         self.epsilon = epsilon
@@ -201,26 +202,31 @@ class EquityReward:
         nodes = list(graph.nodes)
         self.node_poi_count = self._compute_poi_counts(nodes, graph.graph["poi_records"])
         self.node_values = self._compute_node_values(nodes, nodes, self.walk_dist_matrix)
+        self.avg_utility = -(((np.mean(
+                np.maximum(
+                    np.array(list(self.node_values.values())), self.epsilon
+                ))**-self.xi
+            ) * len(human_agents))**self.eta)
 
 
     def reward(
             self, 
             obs_dict: Dict, 
             actions_dict: Dict, 
-            next_reward_time = None, 
+            next_reward_time = None,
             current_reward_time = None) -> Dict[str, float]:
         _ = obs_dict, actions_dict
 
         vehicle_values = self._compute_vehicle_values(obs_dict)
 
-        total_reward = self._compute_utility(obs_dict, vehicle_values)
+        total_reward = self._compute_utility(obs_dict, vehicle_values) - self.avg_utility
 
         if next_reward_time is not None and current_reward_time is not None:
             delta_t = max(
                 0.0,
                 float(next_reward_time) - float(current_reward_time),
             )
-            total_reward = total_reward * delta_t
+            total_reward = total_reward * (1 - self.gamma**delta_t) / -np.log(self.gamma)
 
         reward_per_vehicle = total_reward / float(len(self.vehicle_agents))
         return {agent: reward_per_vehicle for agent in self.vehicle_agents}

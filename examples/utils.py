@@ -11,6 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from accessibility_equity.wrappers.dqn_wrapper import DQNTransportWrapper
 from accessibility_equity.policies import HeuristicRoutingHumanPolicy
 from accessibility_equity.wrappers import REWARD_SCALE, create_dqn_env
 from accessibility_equity.rewards import compute_scenario_utility_bounds
@@ -19,7 +20,15 @@ from accessibility_equity.visualization import save_scenario_figure
 from stable_baselines3.common.monitor import Monitor
 
 
-def make_env(cfg, output_dir=None, seed=None, monitor=True, render_mode=None, reward_function=None):
+def make_env(
+    cfg,
+    output_dir=None,
+    seed=None,
+    monitor=True,
+    render_mode=None,
+    reward_function=None,
+    **kwargs,
+):
     """
     Create a small single-vehicle environment for DQN smoke training.
     """
@@ -31,8 +40,10 @@ def make_env(cfg, output_dir=None, seed=None, monitor=True, render_mode=None, re
         num_vehicles=cfg.env.scenario.num_vehicles,
         num_nodes=cfg.env.scenario.num_nodes,
         seed=seed,
-        human_speeds=[cfg.env.mobility.human_walking_speed_kmh] * cfg.env.scenario.num_humans,
-        vehicle_speeds=[cfg.env.mobility.vehicle_speed_kmh] * cfg.env.scenario.num_vehicles,
+        human_speeds=[cfg.env.mobility.human_walking_speed_kmh]
+        * cfg.env.scenario.num_humans,
+        vehicle_speeds=[cfg.env.mobility.vehicle_speed_kmh]
+        * cfg.env.scenario.num_vehicles,
         human_policy_class=HeuristicRoutingHumanPolicy,
         human_policy_kwargs={"p_wait": 0.5},
         network_kwargs={"speed_mean": cfg.env.mobility.edge_speed_kmh},
@@ -42,7 +53,8 @@ def make_env(cfg, output_dir=None, seed=None, monitor=True, render_mode=None, re
         render_mode=render_mode,
         use_action_masking=True,
         decision_mode=cfg.dqn.decision_mode,
-        reward_function=reward_function
+        reward_function=reward_function,
+        **kwargs,
     )
     if monitor:
         train_monitor_path = output_dir / "train.monitor.csv"
@@ -131,18 +143,20 @@ def plot_training_rewards(cfg, monitor_path, output_path):
     plt.close(fig)
     print(f"Training reward curve saved to '{output_path}'")
 
-def save_training_scenario_diagnostics(cfg, output_dir):
+
+def save_training_scenario_diagnostics(env, output_dir):
     """
     Save the exact configured scenario picture for this training run.
     """
+    if isinstance(env, DQNTransportWrapper):
+        env = env.base_env
     scenario_image_path = output_dir / "scenario.png"
-    preview_env = make_env(cfg, output_dir, seed=cfg.env.scenario.seed, monitor=False, render_mode=None)
     try:
-        scenario = preview_env.base_env.scenario
+        scenario = env.scenario
         utility_bounds = compute_scenario_utility_bounds(
             graph=scenario.network,
-            population_size=cfg.env.scenario.num_humans,
-            reward_config=cfg.env.reward,
+            population_size=env.num_humans,
+            reward_config=env.reward_config,
         )
         footer_lines = [
             (
@@ -165,4 +179,4 @@ def save_training_scenario_diagnostics(cfg, output_dir):
         )
         print(f"Scenario image saved to '{scenario_image_path}'")
     finally:
-        preview_env.close()
+        env.close()

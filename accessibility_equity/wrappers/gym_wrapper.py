@@ -521,7 +521,7 @@ class TransportGymWrapper(gym.Env):
         )
         reward = sum(vehicle_rewards.get(agent, 0.0) for agent in self.vehicle_agents)
         terminated = False
-        truncated = self.step_count >= self.max_steps
+        truncated = self.env.real_time >= self.max_steps
 
         obs = self._get_observation(obs_dict)
         info = {
