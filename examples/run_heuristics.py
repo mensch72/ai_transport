@@ -3,6 +3,8 @@ import sys
 import networkx as nx
 import random
 
+from networkx.algorithms.flow import gomory_hu
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -19,7 +21,7 @@ from accessibility_equity.visualization import (
 )
 from accessibility_equity.wrappers import REWARD_SCALE, create_transport_env
 from accessibility_equity.wrappers import REWARD_SCALE, create_dqn_env
-from accessibility_equity.heuristics import TSPVehicleAgent
+from accessibility_equity.heuristics import TSPVehicleAgent, GoToHumanVehicleAgent
 
 EXPERIMENT_CONFIG = DEFAULT_EXPERIMENT_CONFIG
 SCENARIO_CONFIG = EXPERIMENT_CONFIG.scenario
@@ -32,8 +34,8 @@ NUM_NODES = SCENARIO_CONFIG.num_nodes
 
 
 env = create_dqn_env(
-    num_humans=NUM_HUMANS,
-    num_vehicles=NUM_VEHICLES,
+    num_humans=1,
+    num_vehicles=1,
     num_nodes=NUM_NODES,
     human_policy_class=HeuristicRoutingHumanPolicy,
     seed=0,
@@ -45,10 +47,10 @@ env.base_env.env.start_video_recording()
 obs, info = env.reset()
 env.base_env.env.enable_rendering("graphical")
 
-tsp_agent = TSPVehicleAgent(env)
+gth_agent = GoToHumanVehicleAgent(env)
 
 for _ in range(100):
-    action = tsp_agent.get_action(obs)
+    action = gth_agent.get_action(obs)
     obs, reward, terminated, truncated, info = env.step(action)
     env.base_env.env.render()
 

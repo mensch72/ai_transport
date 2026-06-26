@@ -2,6 +2,7 @@ from collections import Counter
 import csv
 from pathlib import Path
 import sys
+from typing import Optional
 
 import hydra
 from hydra.core.hydra_config import HydraConfig
@@ -18,10 +19,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from accessibility_equity.wrappers.dqn_wrapper import DQNTransportWrapper
 from accessibility_equity.algorithms import MaskedDQN as DQN
 from accessibility_equity.visualization import render_episode_frame_array
 from accessibility_equity.wrappers import REWARD_SCALE
-from accessibility_equity.heuristics import TSPVehicleAgent
+from accessibility_equity.heuristics import TSPVehicleAgent, GoToHumanVehicleAgent
 from accessibility_equity.rewards.efficient_equity_reward import EquityReward
 
 
@@ -36,7 +38,7 @@ def _select_action(policy_name, model, env, obs):
             action_masks=env.action_masks(),
         )
         return int(action)
-    if policy_name == "tsp":
+    if policy_name in ["tsp", "gth"]:
         return model.get_action(obs)
     if policy_name == "random":
         return int(env.action_space.sample())
@@ -159,6 +161,7 @@ def _run_policy_episode(
     print_step_details=False,
     detail_steps=8,
     replay_writer=None,
+    env: Optional[DQNTransportWrapper] = None,
 ):
     """
     Run one evaluation episode for a named policy.
@@ -168,15 +171,17 @@ def _run_policy_episode(
         cfg.env.reward.alpha,
         cfg.env.reward.xi,
         cfg.env.reward.eta,
+        cfg.dqn.gamma,
         cfg.env.mobility.human_walking_speed_kmh,
         cfg.env.mobility.vehicle_speed_kmh)
-    env = make_env(
-        cfg,
-        seed=seed,
-        monitor=False,
-        render_mode=None,
-        reward_function=equity_reward.reward
-    )
+    if env is None:
+        env = make_env(
+            cfg,
+            seed=seed,
+            monitor=False,
+            render_mode=None,
+            reward_function=equity_reward.reward
+        )
     equity_reward.initialize(
         env.base_env.env.network,
         env.base_env.vehicle_agents,
@@ -185,6 +190,8 @@ def _run_policy_episode(
 
     if policy_name == 'tsp':
         model = TSPVehicleAgent(env)
+    if policy_name == 'gth':
+        model = GoToHumanVehicleAgent(env)
     obs, _info = env.reset(seed=seed)
     terminated = False
     truncated = False
@@ -273,7 +280,7 @@ def _run_policy_episode(
     }
 
 
-def evaluate_model(cfg, output_dir, model):
+def evaluate_model(cfg, output_dir, model, env = None):
     """
     Run policy comparison after training.
     """
@@ -301,7 +308,7 @@ def evaluate_model(cfg, output_dir, model):
     emit("=" * 70)
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    policy_names = ["dqn", "random", "always_pass", "tsp"]
+    policy_names = ["dqn", "random", "always_pass", "tsp", "gth"]
     replay_writer = None
     replay_video_path = None
     if cfg.save_decision_replay_video:
@@ -333,6 +340,7 @@ def evaluate_model(cfg, output_dir, model):
                     print_step_details=(episode == 0),
                     detail_steps=8,
                     replay_writer=replay_writer if policy_name == "dqn" else None,
+                    env = env
                 )
                 episode_rewards.append(result["reward"])
                 episode_raw_rewards.append(result["raw_reward"])
