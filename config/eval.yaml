@@ -7,6 +7,8 @@ model_filename: accessibility_equity_dqn_single_vehicle
 episodes: 3
 save_decision_replay_video: False
 decision_replay_fps: 2
+dqn_video_episodes: 1
+video_fps: 12
 
 hydra:
   job:

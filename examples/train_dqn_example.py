@@ -137,4 +137,4 @@ def main(cfg: DictConfig):
 
 
 if __name__ == "__main__":
-    run_with_optional_profiling()
+    main()
