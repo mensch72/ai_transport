@@ -69,11 +69,11 @@ class RewardConfig:
 class DQNConfig:
     decision_mode: str = "routing"
     output_run_name: Optional[str] = None
-    max_steps: int = 100
+    max_steps: int = 200
     eval_episodes: int = 10
     eval_seed: int = 42
     save_model: bool = True
-    total_timesteps: int = 20_000
+    total_timesteps: int = 200_000
     learning_rate: float = 1e-4
     buffer_size: int = 50_000
     learning_starts: int = 1_000
@@ -83,8 +83,7 @@ class DQNConfig:
     target_update_interval: int = 1_000
     exploration_fraction: float = 0.2
     exploration_final_eps: float = 0.05
-    save_decision_replay_video: bool = False
-    decision_replay_fps: int = 2
+    profile_enabled: bool = False
 
 
 @dataclass(frozen=True)
@@ -176,8 +175,7 @@ def load_experiment_config_from_env() -> ExperimentConfig:
         AE_DQN_TOTAL_TIMESTEPS, AE_DQN_LEARNING_RATE, AE_DQN_BUFFER_SIZE,
         AE_DQN_LEARNING_STARTS, AE_DQN_BATCH_SIZE, AE_DQN_GAMMA,
         AE_DQN_TRAIN_FREQ, AE_DQN_TARGET_UPDATE_INTERVAL,
-        AE_DQN_EXPLORATION_FRACTION, AE_DQN_EXPLORATION_FINAL_EPS,
-        AE_DQN_SAVE_DECISION_REPLAY_VIDEO, AE_DQN_DECISION_REPLAY_FPS
+        AE_DQN_EXPLORATION_FRACTION, AE_DQN_EXPLORATION_FINAL_EPS
     """
     defaults = ExperimentConfig()
     scenario = ScenarioConfig(
@@ -254,13 +252,9 @@ def load_experiment_config_from_env() -> ExperimentConfig:
             "AE_DQN_EXPLORATION_FINAL_EPS",
             defaults.dqn.exploration_final_eps,
         ),
-        save_decision_replay_video=_read_bool_env(
-            "AE_DQN_SAVE_DECISION_REPLAY_VIDEO",
-            defaults.dqn.save_decision_replay_video,
-        ),
-        decision_replay_fps=_read_int_env(
-            "AE_DQN_DECISION_REPLAY_FPS",
-            defaults.dqn.decision_replay_fps,
+        profile_enabled=_read_bool_env(
+            "AE_DQN_PROFILE_ENABLED",
+            defaults.dqn.profile_enabled,
         ),
     )
     return ExperimentConfig(

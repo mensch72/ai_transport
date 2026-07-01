@@ -125,6 +125,8 @@ class TransportGymWrapper(gym.Env):
             observation_scenario=observation_scenario,
             render_mode=render_mode,
         )
+        self.env.video_scenario = scenario
+        self.env.reward_config = self.reward_config
 
         self.vehicle_agents = list(self.env.vehicle_agents)
         self.human_agents = list(self.env.human_agents)
