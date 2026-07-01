@@ -116,29 +116,30 @@ class GoToHumanVehicleAgent(VehicleAgent):
 
     def _get_closest_human_node(self):
         closest_node = None
+        closest_human = None
         human_positions = [
             self.env.env.agent_positions.get(human) for human in self.env.human_agents
         ]
-        for pos in human_positions:
+        for pos, human in zip(human_positions, self.env.human_agents):
             pos_node = self._pos_to_node(pos)
             current_node = self._current_node()
             if current_node == pos_node:
-                return None
+                return None, human
             if closest_node is None:
                 closest_node = pos_node
+                closest_human = human
                 continue
             closest_dist = self.dist_matrix[current_node, closest_node]
             pos_dist = self.dist_matrix[current_node, pos_node]
             if pos_dist < closest_dist:
                 closest_node = pos_node
-        return closest_node
+                closest_human = human
+        return closest_node, closest_human
 
     def get_action(self, obs):
-        action = self._get_closest_human_node()
+        action, closest_human = self._get_closest_human_node()
         if action is None:
-            action = self.env.scenario.poi_distribution["voronoi_area_info"][
-                "central_nodes"
-            ][0]
+            action = self.env.human_current_goals[closest_human]
         step_type = self._get_step_type(obs)
         if action == self._current_node():
             action = 0
