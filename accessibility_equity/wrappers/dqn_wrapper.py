@@ -342,26 +342,9 @@ class DQNTransportWrapper(gym.Env):
                 break
         return self._format_observation(obs), self._add_action_mask_info(info)
 
-    def _macro_step_reward(self, decision_obs: Dict[str, Any], decision_time: float) -> float:
+    def _decision_step_reward(self, decision_obs: Dict[str, Any], decision_time: float) -> float:
         """
-        Reward the current DQN macro-step once over its full duration.
-
-        A single DQN decision is followed by the wrapper auto-advancing through
-        several underlying environment sub-steps until the next decision point.
-        The route-based reward function scales the decision-point utility ``U``
-        by the time-discount factor ``(1 - gamma**delta_t) / -ln(gamma)``.
-        Evaluating it once for the full elapsed ``Delta_t`` (``decision_time``
-        -> current ``real_time``) yields ``U * (1 - gamma**Delta_t)/-ln(gamma)``,
-        which is exactly consistent with the ``gamma**Delta_t`` bootstrap used in
-        ``MaskedDQN.train``.
-
-        Summing a separate ``(1 - gamma**delta_t_i)`` factor per sub-step instead
-        (each discounted from its own start) approximates the *undiscounted* time
-        integral and systematically over-penalizes longer trips, biasing the
-        policy toward always routing to the nearest node.
-
-        ``actions_dict`` is unused by the route-based reward functions, so an
-        empty mapping is passed.
+        Compute reward between decision steps.
         """
         next_time = float(self.base_env.env.real_time)
         vehicle_rewards = self.base_env.reward_function(
@@ -375,12 +358,6 @@ class DQNTransportWrapper(gym.Env):
         )
 
     def step(self, action: int):
-        # Snapshot the decision-point state and time. The whole macro-step (this
-        # decision plus the wrapper's internal auto-advance to the next decision
-        # point) is rewarded a single time over its full duration in
-        # ``_macro_step_reward`` rather than by summing one reward per underlying
-        # sub-step; see that method for why per-sub-step summation is
-        # inconsistent with training's ``gamma**delta_t`` bootstrap.
         decision_obs = self.base_env.env._generate_observations()
         decision_time = float(self.base_env.env.real_time)
 
@@ -413,7 +390,7 @@ class DQNTransportWrapper(gym.Env):
             if guard >= 1000:
                 truncated = True
 
-            raw_reward = self._macro_step_reward(decision_obs, decision_time)
+            raw_reward = self._decision_step_reward(decision_obs, decision_time)
             scaled_reward = float(raw_reward) * REWARD_SCALE
             info = self._add_action_mask_info(info)
             info["raw_reward"] = float(raw_reward)
@@ -490,7 +467,7 @@ class DQNTransportWrapper(gym.Env):
         if guard >= 1000:
             truncated = True
 
-        raw_reward = self._macro_step_reward(decision_obs, decision_time)
+        raw_reward = self._decision_step_reward(decision_obs, decision_time)
         scaled_reward = raw_reward * REWARD_SCALE
         info = dict(info)
         info["raw_reward"] = raw_reward
