@@ -5,7 +5,59 @@ from scipy.sparse.csgraph import floyd_warshall
 
 
 class EquityReward:
-    def __init__(self, beta, alpha, xi, eta, gamma, human_speed, vehicle_speed, epsilon=1e-6):
+    def __init__(
+            self, 
+            beta: float, 
+            alpha: float, 
+            xi: float, 
+            eta: float, 
+            gamma: float, 
+            human_speed: float, 
+            vehicle_speed: float, 
+            deduct_average_utility: bool = True,
+            vehicle_advantage: bool = True,
+            distance_scale: float = 0.5,
+            epsilon: float = 1e-6, 
+        ):
+        """
+        Reward class that computes rewards based on the state utility U defined as:
+            X_h(s_t) = sum_c a_c (sum_{j: c_j=c} exp(-beta d_j)) ** alpha
+            U(s_t) = -(sum_h X_h(s_t) ** (-xi)) ** eta
+        where h is a human agent, s_t is the state at time t, c are POI categories, 
+        a_c are category weights and d_j is the distance of h to node j.
+
+        Parameters:
+        beta: 
+            Value of beta used in utility computation.
+        alpha: 
+            Value of alpha used in utility computation.
+        xi: 
+            Value of xi used in utility computation.
+        eta: 
+            Value of eta used in utility computation.
+        gamma: 
+            Discount factor, used to adjust reward based on time between steps.
+        human_speed: 
+            Speed of human agents.
+        vehicle_speed: 
+            Speed of vehicle agents.
+        deduct_average_utility: 
+            When true an estimate of the average utility of the network will be
+            deducted from all rewards.
+        vehicle_advantage:
+            When true the reward will be the difference between utility of the state 
+            with vehicle agents and the state without vehicle agents.
+        distance_scale:
+            Scale that all distances in the network are multiplied by. This can
+            help to keep the absolute rewards from being either too large or small.
+        epsilon: 
+            Minimum value of X_i to avoid division by zero errors.
+
+        Example usage:
+            equity_reward = EquityReward(...)
+            env = TransportGymWrapper(..., reward_function=equity_reward.reward)
+            equity_reward.initialize(...)
+        """
         self.beta = beta
         self.alpha = alpha
         self.xi = xi
@@ -14,19 +66,25 @@ class EquityReward:
         self.human_speed = human_speed
         self.vehicle_speed = vehicle_speed
         self.epsilon = epsilon
+        self.decuct_average_utility = deduct_average_utility
+        self.vehicle_advantage = vehicle_advantage
+        self.distance_scale = distance_scale
 
     def _compute_dist_and_pred_matrix(self, graph: nx.DiGraph):
         """
         Compute the distance matrix, which gives pairwise distances between all nodes
         and the predicessor matrix, which can be used to reconstruct all shortes paths.
 
-        Input:
-        graph: Graph used to compute the matrices.
+        Parameters:
+        graph: 
+            Graph used to compute the matrices.
 
-        Output:
-        dist_matrix: Matrix where dist_matrix[i][j] is the distance from node i to node j.
-        pred_matrix: Matrix where pred_matrix[i][j] is the index of the last node before 
-                     node j on the shortest path from node i to node j.
+        Returns:
+        dist_matrix: 
+            Matrix where dist_matrix[i][j] is the distance from node i to node j.
+        pred_matrix: 
+            Matrix where pred_matrix[i][j] is the index of the last node before 
+            node j on the shortest path from node i to node j.
         """
         length_matrix = nx.to_scipy_sparse_array(graph, weight='length')
         dist_matrix, pred_matrix = floyd_warshall(length_matrix, return_predecessors=True)
@@ -49,14 +107,18 @@ class EquityReward:
         to a given set of destination nodes.
 
         Parameters:
-        s_nodes: List of nodes for which to compute the values.
-        d_nodes: List of nodes for which the distance to the source nodes is considered
-                 when computing the value.
-        dist_matrix: Matrix where dist_matrix[s_node][d_node] is the distance from s_node
-                     to d_node.
+        s_nodes: 
+            List of nodes for which to compute the values.
+        d_nodes: 
+            List of nodes for which the distance to the source nodes is considered
+            when computing the value.
+        dist_matrix: 
+            Matrix where dist_matrix[s_node][d_node] is the distance from s_node
+            to d_node.
 
         Returns:
-        node_values: Dictionary where node_values[n] is the value of node n.       
+        node_values: 
+            Dictionary where node_values[n] is the value of node n.       
         """
         node_values = {n: 0 for n in s_nodes}
         for s_node in s_nodes:
@@ -77,8 +139,9 @@ class EquityReward:
         route is the next node that the vehicle will reach.
 
         Parameters:
-        vehicle_pos: Vehicle position given as a node if the vehicle is at a node or as an edge
-                     and distance along the edge otherwise.
+        vehicle_pos: 
+            Vehicle position given as a node if the vehicle is at a node or as an edge
+            and distance along the edge otherwise.
         dest_node: 
         """
         is_edge_pos = isinstance(vehicle_pos, tuple)
@@ -101,11 +164,14 @@ class EquityReward:
         Computes time to reach each node along a given route.
 
         Parameters:
-        vehicle_pos: Current position of the vehicle, given as either a node or coordinate along an edge.
-        route: List of nodes along the route.
+        vehicle_pos: 
+            Current position of the vehicle, given as either a node or coordinate along an edge.
+        route: 
+            List of nodes along the route.
 
         Returns:
-        distances: List of times it will take to reach each node in the route.
+        distances: 
+            List of times it will take to reach each node in the route.
         """
         cumulative_time = 0.0
 
@@ -126,14 +192,14 @@ class EquityReward:
                 remaining_distance = coord
             cumulative_time += remaining_distance / speed
 
-        distances = [cumulative_time]
+        distances = [cumulative_time * self.distance_scale]
 
         # Accumulate the travel time of every subsequent edge along the route.
         for u, v in zip(route[:-1], route[1:]):
             edge_data = self.graph[u][v]
             speed = min(self.vehicle_speed, edge_data['speed'])
             cumulative_time += edge_data['length'] / speed
-            distances.append(cumulative_time)
+            distances.append(cumulative_time * self.distance_scale)
 
         return distances
 
@@ -143,10 +209,12 @@ class EquityReward:
         Computes the locational value for each vehicle.
 
         Parameters:
-        obs: Observation of the current environment state.
+        obs: 
+            Observation of the current environment state.
 
         Returns:
-        vehicle_values: Dictionary where vehicle_values[v] is the value of vehicle v.
+        vehicle_values: 
+            Dictionary where vehicle_values[v] is the value of vehicle v.
         """
         nodes = list(self.graph.nodes)
         vehicle_dist_matrix = np.empty((len(self.vehicle_agents), len(nodes)))
@@ -177,8 +245,22 @@ class EquityReward:
             return None
         return pos
 
-    def _compute_utility(self, obs: Dict, vehicle_values: Dict):
-        utitlity = 0
+    def _compute_utility(self, obs: Dict, vehicle_values: Dict) -> float:
+        """
+        Computes utility of the current state.
+
+        Parameters:
+        obs: 
+            Observation of the current environment state.
+        vehicle_values:
+            Dictionary where vehicle_values[v] is the value of vehicle v.
+
+        Returns:
+        utility: 
+            Utility of the current state.
+        
+        """
+        utility = 0
         for human in self.human_agents:
             vehicle = obs[human]['human_aboard'][human]
             if vehicle is not None and vehicle in vehicle_values:
@@ -188,38 +270,74 @@ class EquityReward:
                 node = self._position_to_node(pos)
                 value = self.node_values[node]
             value = max(value, self.epsilon)
-            utitlity += value ** (-self.xi)
-        utitlity = -(utitlity**self.eta)
-        return utitlity
+            utility += value ** (-self.xi)
+        utility = -(utility**self.eta)
+        return utility
 
     def initialize(self, graph: nx.DiGraph, vehicle_agents: List, human_agents: List):
+        """
+        Initializes the reward class by precomputing distances and shortest paths in the
+        network that are used for utility calculations.
+
+        Parameters:
+        graph: 
+            Graph of the network of the environment.
+        vehicle_agents:
+            List of vehicle agents.
+        human_agents:
+            List of human agents.
+        """
         self.vehicle_agents = vehicle_agents
         self.human_agents = human_agents
         self.graph = graph
         self.dist_matrix, self.pred_matrix = self._compute_dist_and_pred_matrix(graph)
-        self.dist_matrix = self.dist_matrix / 10
+        self.dist_matrix = self.dist_matrix * self.distance_scale
         self.walk_dist_matrix = self.dist_matrix / self.human_speed
         nodes = list(graph.nodes)
         self.node_poi_count = self._compute_poi_counts(nodes, graph.graph["poi_records"])
         self.node_values = self._compute_node_values(nodes, nodes, self.walk_dist_matrix)
-        self.avg_utility = -(((np.mean(
-                np.maximum(
-                    np.array(list(self.node_values.values())), self.epsilon
-                ))**-self.xi
-            ) * len(human_agents))**self.eta)
+        if self.decuct_average_utility:
+            self.avg_utility = -(((np.mean(
+                    np.maximum(
+                        np.array(list(self.node_values.values())), self.epsilon
+                    ))**-self.xi
+                ) * len(human_agents))**self.eta)
 
 
     def reward(
             self, 
             obs_dict: Dict, 
             actions_dict: Dict, 
-            next_reward_time = None,
-            current_reward_time = None) -> Dict[str, float]:
-        _ = obs_dict, actions_dict
+            next_reward_time: float = None,
+            current_reward_time: float = None) -> Dict[str, float]:
+        """
+        Compute reward of the current state based on utility.
+
+        Parameters:
+        obs_dict:
+            Observation of the current environment state.
+        actions_dict:
+            Dictionary of actions, not used for this reward.
+        next_reward_time:
+            Environment time of the next state for wich a reward is computed.
+        current_reward_time:
+            Environment time of the current state.
+
+        Returns:
+        reward_per_vehicle:
+            Dictionary where reward_per_vehicle[v] is the reward of vehicle v.
+            All vehicles recieve the total reward divided by the number of
+            vehicles.
+        """
+        _ = actions_dict
 
         vehicle_values = self._compute_vehicle_values(obs_dict)
 
-        total_reward = self._compute_utility(obs_dict, vehicle_values) - self.avg_utility
+        total_reward = self._compute_utility(obs_dict, vehicle_values)
+        if self.vehicle_advantage:
+            total_reward -= self._compute_utility(obs_dict, {})
+        if self.decuct_average_utility and not self.vehicle_advantage:
+            total_reward -= self.avg_utility
 
         if next_reward_time is not None and current_reward_time is not None:
             delta_t = max(
