@@ -59,7 +59,9 @@ class MaskedDQN(DQN):
             )
 
         if not action_masks.any(axis=1).all():
-            raise ValueError("Every action mask must contain at least one valid action.")
+            raise ValueError(
+                "Every action mask must contain at least one valid action."
+            )
 
         return action_masks
 
@@ -182,17 +184,23 @@ class MaskedDQN(DQN):
                 env=self._vec_normalize_env,
             )
 
-            t      = replay_data.observations["features"][:, 1:2] 
-            t_next = replay_data.next_observations["features"][:, 1:2]
+            t = replay_data.observations["features"][:, 4:5]
+            t_next = replay_data.next_observations["features"][:, 4:5]
             delta_t = (t_next - t).clamp(min=0.0)
 
-            discounts = replay_data.discounts if replay_data.discounts is not None else self.gamma**delta_t
+            discounts = (
+                replay_data.discounts
+                if replay_data.discounts is not None
+                else self.gamma**delta_t
+            )
 
             with th.no_grad():
-                next_q_values = self.q_net_target(replay_data.next_observations)
+                next_target_q_values = self.q_net_target(replay_data.next_observations)
+                next_q_values = self.q_net(replay_data.next_observations)
                 next_action_masks = replay_data.next_observations["action_mask"].bool()
                 next_q_values = next_q_values.masked_fill(~next_action_masks, -1e9)
-                next_q_values, _ = next_q_values.max(dim=1)
+                next_q_values, next_actions = next_q_values.max(dim=1, keepdims=True)
+                next_q_values = next_target_q_values.gather(dim=1, index=next_actions)
                 next_q_values = next_q_values.reshape(-1, 1)
                 target_q_values = (
                     replay_data.rewards

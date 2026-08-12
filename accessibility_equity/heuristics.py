@@ -28,7 +28,7 @@ class VehicleAgent:
             return obs["step_type"]
         if self.env_type == "DQN":
             if type(obs) is dict:
-                return obs["features"][0]
+                return np.argmax(obs["features"][:4])
             return obs[0]
 
     def _current_node(self):
@@ -110,11 +110,10 @@ class GoToHumanVehicleAgent(VehicleAgent):
     def _pos_to_node(self, pos):
         if not isinstance(pos, tuple):
             return pos
-        edge, coord = pos
-        edge_len = self.graph[edge[0]][edge[1]]["length"]
-        return edge[0] if coord < edge_len / 2 else edge[1]
+        edge, _ = pos
+        return edge[1]
 
-    def _get_closest_human_node(self):
+    def _get_closest_human_node(self) -> tuple[int, str]:
         closest_node = None
         closest_human = None
         human_positions = [
@@ -124,7 +123,7 @@ class GoToHumanVehicleAgent(VehicleAgent):
             pos_node = self._pos_to_node(pos)
             current_node = self._current_node()
             if current_node == pos_node:
-                return None, human
+                return current_node, human
             if closest_node is None:
                 closest_node = pos_node
                 closest_human = human
@@ -137,14 +136,17 @@ class GoToHumanVehicleAgent(VehicleAgent):
         return closest_node, closest_human
 
     def get_action(self, obs):
-        action, closest_human = self._get_closest_human_node()
-        if action is None:
-            action = self.env.human_current_goals[closest_human]
+        closest_human_node, closest_human = self._get_closest_human_node()
         step_type = self._get_step_type(obs)
-        if action == self._current_node():
+        if closest_human_node == self._current_node() and isinstance(
+            self.env.env.agent_positions.get(closest_human), int
+        ):
+            print(self.dist_matrix[self._current_node(), :])
+            action = np.argmax(self.dist_matrix[self._current_node(), :]) + 1
+        elif closest_human_node == self._current_node():
             action = 0
         elif step_type == 0:
-            action = action + 1
+            action = closest_human_node + 1
         elif step_type == 3:
             current_node = self._current_node()
             next_node = self.next_matrix[current_node][action]

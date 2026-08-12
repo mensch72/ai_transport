@@ -15,9 +15,10 @@ import gymnasium as gym
 import networkx as nx
 import numpy as np
 from gymnasium import spaces
+import torch
+from torch.nn.functional import one_hot
 
 from accessibility_equity.wrappers.gym_wrapper import TransportGymWrapper
-
 
 REWARD_SCALE = 1.0
 
@@ -62,12 +63,24 @@ class DQNTransportWrapper(gym.Env):
         self.vehicle_agent = self.base_env.vehicle_agents[0]
         self.node_order = list(self.base_env.env.network.nodes())
         self.node_to_index = {node: index for index, node in enumerate(self.node_order)}
-        self.auto_advance_callback: Optional[Callable[["DQNTransportWrapper", Dict[str, Any]], None]] = None
+        self.auto_advance_callback: Optional[
+            Callable[["DQNTransportWrapper", Dict[str, Any]], None]
+        ] = None
         self.action_space = spaces.Discrete(len(self.node_order) + 1)
         flat_observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
-            shape=(5 + 2 * self.num_vehicles + 3 * self.num_humans,),
+            shape=(
+                4
+                + 1
+                + 2 * self.num_vehicles
+                + self.num_vehicles * len(self.node_order)
+                + 2 * self.num_humans
+                + self.num_humans * len(self.node_order)
+                + 2 * len(self.node_order)
+                + 1
+                + self.num_humans,
+            ),
             dtype=np.float32,
         )
         if self.use_action_masking:
@@ -106,7 +119,9 @@ class DQNTransportWrapper(gym.Env):
         if not self._vehicle_is_at_node():
             return mask
 
-        current_node = self._position_to_node(env.agent_positions.get(self.vehicle_agent))
+        current_node = self._position_to_node(
+            env.agent_positions.get(self.vehicle_agent)
+        )
         if current_node is None:
             return mask
 
@@ -138,7 +153,9 @@ class DQNTransportWrapper(gym.Env):
         if env.step_type != "departing" or action == 0:
             return 0
 
-        current_node = self._position_to_node(env.agent_positions.get(self.vehicle_agent))
+        current_node = self._position_to_node(
+            env.agent_positions.get(self.vehicle_agent)
+        )
         target_node = self.node_order[action - 1]
         outgoing_edges = list(env.network.out_edges(current_node))
         for index, edge in enumerate(outgoing_edges, start=1):
@@ -151,7 +168,9 @@ class DQNTransportWrapper(gym.Env):
         info["action_mask"] = self.action_masks()
         return info
 
-    def _format_observation(self, obs: Dict[str, Any]) -> np.ndarray | Dict[str, np.ndarray]:
+    def _format_observation(
+        self, obs: Dict[str, Any]
+    ) -> np.ndarray | Dict[str, np.ndarray]:
         flat_obs = self._flatten_observation(obs)
         if not self.use_action_masking:
             return flat_obs
@@ -160,13 +179,13 @@ class DQNTransportWrapper(gym.Env):
             "action_mask": self.action_masks().astype(np.float32),
         }
 
-    def _position_to_node(self, pos: Any) -> Optional[Any]:
+    def _position_to_node(self, pos: Any, edge_to_target=False) -> Optional[Any]:
         if pos is None:
             return None
         if isinstance(pos, tuple):
             edge, _coord = pos
             if edge and len(edge) >= 2:
-                return edge[0]
+                return edge[1] if edge_to_target else edge[0]
             return None
         return pos
 
@@ -206,10 +225,16 @@ class DQNTransportWrapper(gym.Env):
                 return int(hold_destination_action)
             return 0
 
-        if step_type != "departing" or not self._vehicle_is_at_node() or not auto_depart:
+        if (
+            step_type != "departing"
+            or not self._vehicle_is_at_node()
+            or not auto_depart
+        ):
             return 0
 
-        current_node = self._position_to_node(env.agent_positions.get(self.vehicle_agent))
+        current_node = self._position_to_node(
+            env.agent_positions.get(self.vehicle_agent)
+        )
         destination = env.vehicle_destinations.get(self.vehicle_agent)
         if current_node is None or destination is None or current_node == destination:
             return 0
@@ -284,26 +309,60 @@ class DQNTransportWrapper(gym.Env):
         Flatten the project dict observation into a fixed DQN vector.
         """
         env = self.base_env.env
-        step_type = np.asarray([float(obs.get("step_type", 0))], dtype=np.float32)
-        real_time = np.asarray(obs.get("real_time", [0.0]), dtype=np.float32).reshape(-1)
+        n_nodes = len(self.node_order)
+        step_type = obs.get("step_type", 0)
+        step_type = one_hot(torch.tensor(step_type), 4)
+        real_time = np.asarray(obs.get("real_time", [0.0]), dtype=np.float32).reshape(
+            -1
+        )
         vehicle_positions = np.asarray(
             obs.get("vehicle_positions", np.zeros((self.num_vehicles, 2))),
             dtype=np.float32,
         ).reshape(-1)
+        vehicle_node_positions = torch.tensor(
+            [
+                int(self._position_to_node(
+                    env.agent_positions.get(agent), edge_to_target=True
+                ))
+                for agent in env.vehicle_agents
+            ]
+        )
+        human_node_positions = torch.tensor(
+            [
+                int(self._position_to_node(
+                    env.agent_positions.get(agent), edge_to_target=True
+                ))
+                for agent in env.human_agents
+            ]
+        )
+        vehicle_node_positions = one_hot(vehicle_node_positions, n_nodes).flatten()
+        human_node_positions = one_hot(human_node_positions, n_nodes).flatten()
         human_positions = np.asarray(
             obs.get("human_positions", np.zeros((self.num_humans, 2))),
             dtype=np.float32,
         ).reshape(-1)
-        current_node = self._position_to_node(env.agent_positions.get(self.vehicle_agent))
+        current_node = self._position_to_node(
+            env.agent_positions.get(self.vehicle_agent)
+        )
         destination = env.vehicle_destinations.get(self.vehicle_agent)
         control_state = np.asarray(
             [
-                self._node_feature(current_node),
-                self._node_feature(destination),
-                float(self.action_space.n),
+                (
+                    one_hot(
+                        torch.tensor(int(self._node_feature(current_node))), n_nodes
+                    )
+                    if current_node
+                    else [0] * n_nodes
+                ),
+                (
+                    one_hot(torch.tensor(int(self._node_feature(destination))), n_nodes)
+                    if destination
+                    else [0] * n_nodes
+                ),
             ],
             dtype=np.float32,
-        )
+        ).flatten()
+        action_space = [self.action_space.n]
         human_aboard = np.asarray(
             [
                 1.0 if env.human_aboard.get(human) == self.vehicle_agent else 0.0
@@ -317,8 +376,11 @@ class DQNTransportWrapper(gym.Env):
                 step_type,
                 real_time[:1],
                 vehicle_positions,
+                vehicle_node_positions,
                 human_positions,
+                human_node_positions,
                 control_state,
+                action_space,
                 human_aboard,
             ],
             dtype=np.float32,
@@ -335,20 +397,24 @@ class DQNTransportWrapper(gym.Env):
         guard = 0
         while not self._at_dqn_decision_point() and guard < 100:
             obs, _reward, terminated, truncated, info = self.base_env.step(
-                np.asarray([self._auto_vehicle_action_between_decisions()], dtype=np.int64)
+                np.asarray(
+                    [self._auto_vehicle_action_between_decisions()], dtype=np.int64
+                ),
+                compute_reward=False,
             )
             guard += 1
             if terminated or truncated:
                 break
         return self._format_observation(obs), self._add_action_mask_info(info)
 
-    def _decision_step_reward(self, decision_obs: Dict[str, Any], decision_time: float) -> float:
+    def _decision_step_reward(self, obs: Dict[str, Any], decision_time: float) -> float:
         """
         Compute reward between decision steps.
         """
         next_time = float(self.base_env.env.real_time)
+        next_obs = self.base_env.env._generate_observations()
         vehicle_rewards = self.base_env.reward_function(
-            decision_obs, {}, next_time, decision_time
+            obs, next_obs, {}, decision_time, next_time
         )
         if not isinstance(vehicle_rewards, dict):
             return float(vehicle_rewards)
@@ -364,20 +430,32 @@ class DQNTransportWrapper(gym.Env):
         if self.use_action_masking:
             action = int(action)
             pre_step_mask = self.action_masks()
-            action_was_valid = 0 <= action < self.action_space.n and bool(pre_step_mask[action])
-            underlying_action = self._masked_node_action_to_underlying_action(int(action))
+            action_was_valid = 0 <= action < self.action_space.n and bool(
+                pre_step_mask[action]
+            )
+            underlying_action = self._masked_node_action_to_underlying_action(
+                int(action)
+            )
             boarding_debug_records = []
             obs, _reward, terminated, truncated, info = self.base_env.step(
-                np.asarray([underlying_action], dtype=np.int64)
+                np.asarray([underlying_action], dtype=np.int64),
+                compute_reward=False,
             )
             if self.base_env.last_boarding_debug_records:
                 boarding_debug_records.extend(self.base_env.last_boarding_debug_records)
             self._render_auto_advance_frame()
 
             guard = 1
-            while not (terminated or truncated) and not self._at_dqn_decision_point() and guard < 1000:
+            while (
+                not (terminated or truncated)
+                and not self._at_dqn_decision_point()
+                and guard < 1000
+            ):
                 obs, _reward, terminated, truncated, info = self.base_env.step(
-                    np.asarray([self._auto_vehicle_action_between_decisions()], dtype=np.int64)
+                    np.asarray(
+                        [self._auto_vehicle_action_between_decisions()], dtype=np.int64
+                    ),
+                    compute_reward=False,
                 )
                 if self.base_env.last_boarding_debug_records:
                     for record in self.base_env.last_boarding_debug_records:
@@ -444,7 +522,9 @@ class DQNTransportWrapper(gym.Env):
                 ],
                 dtype=np.int64,
             )
-            obs, _reward, terminated, truncated, info = self.base_env.step(vehicle_action)
+            obs, _reward, terminated, truncated, info = self.base_env.step(
+                vehicle_action, compute_reward=False
+            )
             if self.base_env.last_boarding_debug_records:
                 for record in self.base_env.last_boarding_debug_records:
                     enriched_record = dict(record)
@@ -461,7 +541,9 @@ class DQNTransportWrapper(gym.Env):
                 break
 
             if self._at_dqn_decision_point() and applied_dqn_routing_action:
-                if target_destination is None or self._destination_reached(target_destination):
+                if target_destination is None or self._destination_reached(
+                    target_destination
+                ):
                     break
 
         if guard >= 1000:
