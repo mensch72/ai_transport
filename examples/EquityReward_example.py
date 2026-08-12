@@ -9,6 +9,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from accessibility_equity.config import (
     DEFAULT_EXPERIMENT_CONFIG,
+    DQNConfig,
     save_experiment_config,
 )
 from accessibility_equity.policies import HeuristicRoutingHumanPolicy
@@ -20,7 +21,7 @@ from accessibility_equity.visualization import (
 from accessibility_equity.wrappers import REWARD_SCALE, create_transport_env
 from accessibility_equity.wrappers import REWARD_SCALE, create_dqn_env
 from accessibility_equity.heuristics import TSPVehicleAgent
-from accessibility_equity.rewards.efficient_equity_reward import EquityReward 
+from accessibility_equity.rewards.efficient_equity_reward import EquityReward
 
 EXPERIMENT_CONFIG = DEFAULT_EXPERIMENT_CONFIG
 SCENARIO_CONFIG = EXPERIMENT_CONFIG.scenario
@@ -32,12 +33,14 @@ NUM_VEHICLES = SCENARIO_CONFIG.num_vehicles
 NUM_NODES = SCENARIO_CONFIG.num_nodes
 
 equity_reward = EquityReward(
-    REWARD_CONFIG.beta, 
-    REWARD_CONFIG.alpha, 
-    REWARD_CONFIG.xi, 
-    REWARD_CONFIG.eta, 
+    REWARD_CONFIG.beta,
+    REWARD_CONFIG.alpha,
+    REWARD_CONFIG.xi,
+    REWARD_CONFIG.eta,
+    EXPERIMENT_CONFIG.dqn.gamma,
     MOBILITY_CONFIG.human_walking_speed_kmh,
-    MOBILITY_CONFIG.vehicle_speed_kmh)
+    MOBILITY_CONFIG.vehicle_speed_kmh,
+)
 
 env = create_dqn_env(
     num_humans=NUM_HUMANS,
@@ -45,16 +48,14 @@ env = create_dqn_env(
     num_nodes=NUM_NODES,
     human_policy_class=HeuristicRoutingHumanPolicy,
     seed=42,
-    reward_function=equity_reward.reward
+    reward_function=equity_reward.reward,
 )
 
 equity_reward.initialize(
-    env.base_env.env.network, 
-    env.base_env.vehicle_agents,
-    env.base_env.human_agents,
-    )
+    env.base_env,
+)
 
-#env.base_env.env.start_video_recording()
+# env.base_env.env.start_video_recording()
 
 obs, info = env.reset()
 # env.base_env.env.enable_rendering("graphical")

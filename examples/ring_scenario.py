@@ -51,7 +51,7 @@ def build_ring_scenario(
     num_nodes: int,
     poi_type: str = "workplace",
     poi_weight: float = 0.40,
-    radius: float = 10.0,
+    radius_per_node: float = 1.0,
     edge_speed_kmh: float = 30.0,
     edge_capacity: float = 10.0,
 ) -> TransportScenario:
@@ -71,6 +71,7 @@ def build_ring_scenario(
     if num_nodes < 3:
         raise ValueError("A ring scenario needs at least 3 nodes.")
 
+    radius = radius_per_node * num_nodes
     graph = nx.DiGraph()
     for node in range(num_nodes):
         angle = 2.0 * math.pi * node / num_nodes
@@ -244,9 +245,7 @@ def main(cfg: DictConfig):
     save_training_scenario_diagnostics(env.env, output_dir)
 
     equity_reward.initialize(
-        env.env.base_env.env.network,
-        env.env.base_env.vehicle_agents,
-        env.env.base_env.human_agents,
+        env.env.base_env,
     )
 
     model = DQN(
@@ -262,6 +261,8 @@ def main(cfg: DictConfig):
         target_update_interval=cfg.dqn.target_update_interval,
         exploration_fraction=cfg.dqn.exploration_fraction,
         exploration_final_eps=cfg.dqn.exploration_final_eps,
+        tau=cfg.dqn.tau,
+        tensorboard_log=output_dir,
     )
 
     model.learn(total_timesteps=cfg.dqn.total_timesteps, progress_bar=True)
@@ -271,7 +272,9 @@ def main(cfg: DictConfig):
     with open_dict(cfg):
         cfg.save_decision_replay_video = True
         cfg.decision_replay_fps = 2
-        cfg.episodes = 3
+        cfg.dqn_video_episodes = 1
+        cfg.episodes = 20
+        cfg.video_fps = 20
     evaluate_model(cfg, output_dir, model, env.env)
     env.close()
     plot_training_rewards(cfg, train_monitor_path, train_curve_path)

@@ -4,6 +4,7 @@ scenario:
   num_vehicles: 1
   seed: 42
   central_count: 1
+  randomize_initial_state: True
 
 mobility:
   human_walking_speed_kmh: 3.0
@@ -21,3 +22,6 @@ reward:
   normalize_utility: False
   clip_normalized_utility: False
   normalized_reward_scale: 100
+  deduct_average_utility: True
+  reward_potential: True
+  vehicle_advantage: True

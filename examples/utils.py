@@ -46,6 +46,9 @@ def make_env(
         * cfg.env.scenario.num_vehicles,
         human_policy_class=HeuristicRoutingHumanPolicy,
         human_policy_kwargs={"p_wait": 0.5},
+        randomize_initial_state=cfg.env.scenario.get(
+            "randomize_initial_state", False
+        ),
         network_kwargs={"speed_mean": cfg.env.mobility.edge_speed_kmh},
         reward_config=cfg.env.reward,
         mobility_config=cfg.env.mobility,
