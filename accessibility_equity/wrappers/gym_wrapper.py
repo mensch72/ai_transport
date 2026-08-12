@@ -62,6 +62,7 @@ class TransportGymWrapper(gym.Env):
         human_policy_kwargs: Optional[Dict] = None,
         reward_function: Optional[Callable] = None,
         human_goal_nodes: Optional[List[int]] = None,
+        randomize_initial_state: bool = False,
         network_kwargs: Optional[Dict[str, Any]] = None,
         poi_kwargs: Optional[Dict[str, Any]] = None,
         human_distribution_kwargs: Optional[Dict[str, Any]] = None,
@@ -106,6 +107,21 @@ class TransportGymWrapper(gym.Env):
 
         self.scenario = scenario
         self.human_goal_nodes = list(scenario.human_goal_nodes)
+
+        # Kwargs used to rebuild the scenario on each reset when randomization is
+        # enabled. The network topology is reused (passed explicitly), so only the
+        # agent positions and human destinations are re-drawn with a fresh seed.
+        self.randomize_initial_state = randomize_initial_state
+        self._scenario_build_kwargs = dict(
+            num_humans=num_humans,
+            num_vehicles=num_vehicles,
+            network=scenario.network,
+            network_kwargs=network_options,
+            poi_kwargs=poi_options,
+            human_distribution_kwargs=human_distribution_kwargs,
+            vehicle_distribution_kwargs=vehicle_distribution_kwargs,
+            human_goal_nodes=human_goal_nodes,
+        )
         self.utility_bounds = None
         if self.reward_config.normalize_utility:
             self.utility_bounds = compute_scenario_utility_bounds(
@@ -319,7 +335,7 @@ class TransportGymWrapper(gym.Env):
             )
         return records
 
-    def _default_reward_function(self, obs_dict: Dict, actions_dict: Dict, current_time=None, next_time=None) -> Dict[str, float]:
+    def _default_reward_function(self, obs_dict: Dict, next_obs_dict: Dict, actions_dict: Dict, current_time=None, next_time=None) -> Dict[str, float]:
         """
         Default reward function based on route-induced accessibility and equity utility.
 
@@ -461,6 +477,12 @@ class TransportGymWrapper(gym.Env):
         super().reset(seed=seed)
 
         self.step_count = 0
+        if self.randomize_initial_state:
+            episode_seed = int(self.np_random.integers(0, 2**31 - 1))
+            self.scenario = build_transport_scenario(
+                seed=episode_seed, **self._scenario_build_kwargs
+            )
+            self.human_goal_nodes = list(self.scenario.human_goal_nodes)
         initial_state = dict(self.scenario.initial_state)
         reset_options = {}
         if options:
@@ -484,7 +506,7 @@ class TransportGymWrapper(gym.Env):
         info = {"step_type": self.env.step_type, "real_time": self.env.real_time}
         return obs, info
 
-    def step(self, vehicle_actions: np.ndarray):
+    def step(self, vehicle_actions: np.ndarray, compute_reward: bool = True):
         """Take a step with actions for vehicles only."""
         self.step_count += 1
         self.last_boarding_debug_records = []
@@ -512,16 +534,20 @@ class TransportGymWrapper(gym.Env):
                 self.env.human_aboard.get(record["human"])
             )
 
-        self._next_reward_state = self._extract_reward_state()
-        self._next_reward_time = float(self.env.real_time)
+        reward = 0
+        if compute_reward:
+            self._next_reward_state = self._extract_reward_state()
+            self._next_reward_time = float(self.env.real_time)
+            next_obs_dict = self.env._generate_observations()
 
-        vehicle_rewards = self.reward_function(
-            current_obs_dict, 
-            actions_dict, 
-            self._next_reward_time,
-            self._current_reward_time
-        )
-        reward = sum(vehicle_rewards.get(agent, 0.0) for agent in self.vehicle_agents)
+            vehicle_rewards = self.reward_function(
+                current_obs_dict,
+                next_obs_dict,
+                actions_dict,
+                self._current_reward_time,
+                self._next_reward_time,
+            )
+            reward = sum(vehicle_rewards.get(agent, 0.0) for agent in self.vehicle_agents)
         terminated = False
         truncated = self.env.real_time >= self.max_steps
 
