@@ -541,6 +541,7 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
             speed = data.get('speed', 1.0)
             duration = length / speed if speed > 0 else float('inf')
             self.duration_graph.add_edge(u, v, weight=duration)
+        self.unboarded_vehicle = None
     
     def _normalize_node_id(self, node):
         """
@@ -802,6 +803,9 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
         vehicle_exit_plans = {}
         
         for vehicle_id, destination, path, nodes_on_path, action_idx in vehicle_info:
+            if self.unboarded_vehicle == vehicle_id:
+                self.unboarded_vehicle = None
+                continue
             if best_z in nodes_on_path:
                 # Find time for vehicle to reach best_z
                 # Get partial path from current_node to best_z
@@ -1046,6 +1050,13 @@ class HeuristicRoutingHumanPolicy(HumanPolicy):
         
         # CASE 4: Check if vehicle is going wrong direction
         if self.previous_node is not None:
+            vehicle_path = self._compute_shortest_duration_path(current_node, current_vehicle_dest)
+            if vehicle_path and isinstance(vehicle_path, list) and len(vehicle_path) >= 2:
+                if vehicle_path[1] == self.previous_node:
+                    self.previous_node = current_node
+                    self.unboarded_vehicle = aboard_vehicle
+                    return 1, f"Going back to previous_node"
+
             # Compute walking distance from previous node to target
             previous_to_target = self._compute_walking_time_to_target(self.previous_node, walking_speed)
             
