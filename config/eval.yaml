@@ -4,7 +4,7 @@ defaults:
 model_dir: ???
 model_filename: accessibility_equity_dqn_single_vehicle
 
-episodes: 3
+episodes: 50
 save_decision_replay_video: False
 decision_replay_fps: 2
 dqn_video_episodes: 1

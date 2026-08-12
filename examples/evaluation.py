@@ -114,9 +114,7 @@ def _run_policy_episode(
             reward_function=equity_reward.reward
         )
     equity_reward.initialize(
-        env.base_env.env.network,
-        env.base_env.vehicle_agents,
-        env.base_env.human_agents
+        env.base_env,
     )
 
     if policy_name == 'tsp':
@@ -265,6 +263,7 @@ def evaluate_model(cfg, output_dir, model, env = None):
                 record_video=record_video,
                 video_path=video_path,
                 video_fps=cfg.video_fps,
+                env=env
             )
             episode_rewards.append(result["reward"])
             episode_raw_rewards.append(result["raw_reward"])
@@ -307,20 +306,20 @@ def evaluate_model(cfg, output_dir, model, env = None):
                     "visited_nodes": " ".join(str(node) for node in result["visited_nodes"]),
                 }
             )
-    mean_reward = sum(episode_rewards) / len(episode_rewards)
-    mean_raw_reward = sum(episode_raw_rewards) / len(episode_raw_rewards)
-    invalid_action_rate = (
-        invalid_action_count / total_action_count
-        if total_action_count
-        else 0.0
-    )
-    emit(f"Mean evaluation scaled reward: {mean_reward:.6f}")
-    emit(f"Mean evaluation raw reward: {mean_raw_reward:.6f}")
-    emit(
-        f"Invalid action rate: {invalid_action_count}/"
-        f"{total_action_count} ({invalid_action_rate:.2%})"
-    )
-    emit(f"Most common actions: {action_counts.most_common(10)}")
+        mean_reward = sum(episode_rewards) / len(episode_rewards)
+        mean_raw_reward = sum(episode_raw_rewards) / len(episode_raw_rewards)
+        invalid_action_rate = (
+            invalid_action_count / total_action_count
+            if total_action_count
+            else 0.0
+        )
+        emit(f"Mean evaluation scaled reward: {mean_reward:.6f}")
+        emit(f"Mean evaluation raw reward: {mean_raw_reward:.6f}")
+        emit(
+            f"Invalid action rate: {invalid_action_count}/"
+            f"{total_action_count} ({invalid_action_rate:.2%})"
+        )
+        emit(f"Most common actions: {action_counts.most_common(10)}")
 
     log_path.write_text("\n".join(log_lines) + "\n", encoding="utf-8")
     with evaluation_episodes_summary_csv_path.open("w", newline="", encoding="utf-8") as handle:
