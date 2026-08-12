@@ -88,6 +88,9 @@ def main(cfg: DictConfig):
         cfg.dqn.gamma,
         cfg.env.mobility.human_walking_speed_kmh,
         cfg.env.mobility.vehicle_speed_kmh,
+        deduct_average_utility=cfg.env.reward.deduct_average_utility,
+        reward_potential=cfg.env.reward.reward_potential,
+        vehicle_advantage=cfg.env.reward.vehicle_advantage,
     )
 
     env = make_env(
@@ -102,9 +105,7 @@ def main(cfg: DictConfig):
     save_training_scenario_diagnostics(env.env, output_dir)
 
     equity_reward.initialize(
-        env.env.base_env.env.network,
-        env.env.base_env.vehicle_agents,
-        env.env.base_env.human_agents,
+        env.env.base_env,
     )
 
     model = DQN(
@@ -120,6 +121,8 @@ def main(cfg: DictConfig):
         target_update_interval=cfg.dqn.target_update_interval,
         exploration_fraction=cfg.dqn.exploration_fraction,
         exploration_final_eps=cfg.dqn.exploration_final_eps,
+        tau=cfg.dqn.tau,
+        tensorboard_log=output_dir,
     )
 
     model.learn(total_timesteps=cfg.dqn.total_timesteps, progress_bar=True)
