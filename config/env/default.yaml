@@ -11,6 +11,38 @@ mobility:
   vehicle_speed_kmh: 30.0
   edge_speed_kmh: 30.0
 
+network:
+  bidirectional_prob: 0.85
+  speed_mean: ${env.mobility.edge_speed_kmh}
+  capacity_mean: 10.0
+  coord_mean: 0.0
+  coord_std: 10.0
+  central_node_count: ${env.scenario.central_count}
+  extra_neighbors_per_central_node: null
+
+poi:
+  central_count: ${env.scenario.central_count}
+  residential_ratio: 0.5
+  a: 0.5  # frequency coefficient in poi_weight = a * frequency + b * necessity
+  b: 0.5  # necessity coefficient in poi_weight = a * frequency + b * necessity
+  poi_count_per_type: null
+  poi_profiles:
+    workplace:
+      frequency: 0.40
+      necessity: 0.40
+    supermarket:
+      frequency: 0.35
+      necessity: 0.35
+    healthcare:
+      frequency: 0.25
+      necessity: 0.25
+  poi_area_probabilities:
+    central: 0.75
+    peripheral: 0.25
+  residential_area_probabilities:
+    central: 0.5
+    peripheral: 0.5
+
 reward:
   utility_mode: "equity"
   beta: 1.0

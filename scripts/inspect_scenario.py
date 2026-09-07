@@ -10,68 +10,51 @@ Generate a complete TransportScenario and print a compact summary:
 - initial state passed to the environment
 """
 
-import argparse
+import json
 import sys
 from collections import Counter
 from pathlib import Path
 
+import hydra
+from omegaconf import DictConfig, OmegaConf
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+if not OmegaConf.has_resolver("project_root"):
+    OmegaConf.register_new_resolver("project_root", lambda: str(PROJECT_ROOT))
 
-from accessibility_equity.config import DEFAULT_EXPERIMENT_CONFIG, save_experiment_config
 from accessibility_equity.scenarios import build_transport_scenario
 from accessibility_equity.rewards import compute_scenario_utility_bounds
 from accessibility_equity.visualization import save_scenario_figure
 
 
-def main():
+@hydra.main(config_path="../config", config_name="train")
+def main(cfg: DictConfig):
     """Generate a scenario and print a compact summary."""
-    base_config = DEFAULT_EXPERIMENT_CONFIG
-    scenario_config = base_config.scenario
-    parser = argparse.ArgumentParser(description="Inspect a generated transport scenario.")
-    parser.add_argument("--nodes", type=int, default=scenario_config.num_nodes, help="Number of network nodes.")
-    parser.add_argument("--humans", type=int, default=scenario_config.num_humans, help="Number of human agents.")
-    parser.add_argument("--vehicles", type=int, default=scenario_config.num_vehicles, help="Number of vehicle agents.")
-    parser.add_argument("--seed", type=int, default=scenario_config.seed, help="Random seed.")
-    parser.add_argument(
-        "--central-count",
-        type=int,
-        default=scenario_config.central_count,
-        help="Number of network nodes classified as central areas.",
-    )
-    parser.add_argument(
-        "--output",
-        type=Path,
-        default=None,
-        help="Path for the generated scenario image.",
-    )
-    args = parser.parse_args()
-    scenario_config = scenario_config.with_overrides(
-        num_nodes=args.nodes,
-        num_humans=args.humans,
-        num_vehicles=args.vehicles,
-        seed=args.seed,
-        central_count=args.central_count,
-    )
-    experiment_config = base_config.with_overrides(scenario=scenario_config)
+    scenario_config = cfg.env.scenario
+    mobility_config = cfg.env.mobility
+    reward_config = cfg.env.reward
 
     scenario = build_transport_scenario(
         num_humans=scenario_config.num_humans,
         num_vehicles=scenario_config.num_vehicles,
         num_nodes=scenario_config.num_nodes,
         seed=scenario_config.seed,
-        network_kwargs={"speed_mean": experiment_config.mobility.edge_speed_kmh},
-        poi_kwargs=scenario_config.poi_kwargs,
+        network_kwargs=OmegaConf.to_container(cfg.env.network, resolve=True),
+        poi_kwargs=OmegaConf.to_container(cfg.env.poi, resolve=True),
     )
     graph = scenario.network
     poi_distribution = scenario.poi_distribution
     human_distribution = scenario.human_distribution
     vehicle_distribution = scenario.vehicle_distribution
-    output_path = args.output
+    inspect_config = cfg.get("inspect", {})
+    output_path = inspect_config.get("output")
     if output_path is None:
         output_path = PROJECT_ROOT / "outputs" / f"scenario_seed{scenario_config.seed}_{scenario_config.num_nodes}nodes.png"
-    elif not output_path.is_absolute():
+    else:
+        output_path = Path(output_path)
+    if not output_path.is_absolute():
         output_path = PROJECT_ROOT / output_path
     config_path = output_path.with_name("config.json")
 
@@ -85,17 +68,17 @@ def main():
     print(f"Central area nodes requested: {scenario_config.central_count}")
     print(
         "Mobility: "
-        f"human={experiment_config.mobility.human_walking_speed_kmh:g} km/h, "
-        f"vehicle={experiment_config.mobility.vehicle_speed_kmh:g} km/h, "
-        f"edge={experiment_config.mobility.edge_speed_kmh:g} km/h"
+        f"human={mobility_config.human_walking_speed_kmh:g} km/h, "
+        f"vehicle={mobility_config.vehicle_speed_kmh:g} km/h, "
+        f"edge={mobility_config.edge_speed_kmh:g} km/h"
     )
     print(
         "Reward: "
-        f"utility_mode={experiment_config.reward.utility_mode}, "
-        f"beta={experiment_config.reward.beta:g}, "
-        f"alpha={experiment_config.reward.alpha:g}, "
-        f"xi={experiment_config.reward.xi:g}, "
-        f"eta={experiment_config.reward.eta:g}"
+        f"utility_mode={reward_config.utility_mode}, "
+        f"beta={reward_config.beta:g}, "
+        f"alpha={reward_config.alpha:g}, "
+        f"xi={reward_config.xi:g}, "
+        f"eta={reward_config.eta:g}"
     )
 
     area_counts = Counter(
@@ -163,7 +146,7 @@ def main():
     utility_bounds = compute_scenario_utility_bounds(
         graph=graph,
         population_size=scenario_config.num_humans,
-        reward_config=experiment_config.reward,
+        reward_config=reward_config,
     )
     print("\nTheoretical utility range for this scenario (without time):")
     print(
@@ -200,7 +183,10 @@ def main():
         utility_bounds=utility_bounds,
     )
     print(f"\nScenario image saved to: {output_path}")
-    save_experiment_config(experiment_config, config_path)
+    config_path.write_text(
+        json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2) + "\n",
+        encoding="utf-8",
+    )
     print(f"Resolved config saved to: {config_path}")
 
 

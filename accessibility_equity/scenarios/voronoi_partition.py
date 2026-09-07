@@ -27,11 +27,6 @@ import numpy as np
 from scipy.spatial import Voronoi
 from shapely.geometry import MultiPoint, Polygon
 
-from accessibility_equity.config import DEFAULT_EXPERIMENT_CONFIG
-
-
-DEFAULT_CENTRAL_COUNT = DEFAULT_EXPERIMENT_CONFIG.scenario.central_count
-
 
 def _extract_coordinates(graph: nx.DiGraph) -> Tuple[List[Any], np.ndarray]:
     """
@@ -163,7 +158,7 @@ def _voronoi_finite_polygons_2d(vor: Voronoi, radius: Optional[float] = None):
 def classify_voronoi_cells_by_node_degree(
     graph: nx.DiGraph,
     nodes: List[Any],
-    central_count: int = DEFAULT_CENTRAL_COUNT,
+    central_count: int = 1,
 ) -> Dict[str, Any]:
     """
     Classify Voronoi cells from their generator nodes' network degree.
@@ -220,7 +215,7 @@ def build_voronoi_partition(
     clip_polygon: Optional[Polygon] = None,
     buffer_distance: Optional[float] = None,
     buffer_ratio: float = 0.1,
-    central_count: int = DEFAULT_CENTRAL_COUNT,
+    central_count: int = 1,
 ) -> Dict[str, Any]:
     """
     Build Voronoi polygons for the network nodes and clip them to the study area.

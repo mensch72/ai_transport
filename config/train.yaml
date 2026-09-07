@@ -9,7 +9,7 @@ dqn:
   eval_episodes: 10
   eval_seed: 42
   save_model: True
-  total_timesteps: 20_000
+  total_timesteps: 100_000
   learning_rate: 1e-4
   buffer_size: 50_000
   learning_starts: 1_000
@@ -20,3 +20,10 @@ dqn:
   tau: 0.001
   exploration_fraction: 0.2
   exploration_final_eps: 0.05
+  profile_enabled: False
+
+hydra:
+  job:
+    chdir: False
+  run:
+    dir: ${project_root:}/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}

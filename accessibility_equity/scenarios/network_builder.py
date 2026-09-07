@@ -30,11 +30,6 @@ import networkx as nx
 import numpy as np
 from scipy.spatial import Delaunay
 
-from accessibility_equity.config import DEFAULT_EXPERIMENT_CONFIG
-
-
-DEFAULT_EDGE_SPEED_KMH = DEFAULT_EXPERIMENT_CONFIG.mobility.edge_speed_kmh
-
 
 def _add_edge_with_attributes(
     graph: nx.DiGraph,
@@ -180,7 +175,7 @@ def _add_center_biased_edges(
 def create_random_2d_network(
     num_nodes: int = 10,
     bidirectional_prob: float = 0.85,
-    speed_mean: float = DEFAULT_EDGE_SPEED_KMH,
+    speed_mean: float = 30.0,
     capacity_mean: float = 10.0,
     coord_mean: float = 0.0,
     coord_std: float = 10.0,

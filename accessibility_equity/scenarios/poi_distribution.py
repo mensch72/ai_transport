@@ -29,30 +29,27 @@ import networkx as nx
 import numpy as np
 from shapely.geometry import Point
 
-from accessibility_equity.config import DEFAULT_EXPERIMENT_CONFIG
-
 from .voronoi_partition import build_voronoi_partition
 
 
 POI_CATEGORIES: Tuple[str, ...] = ("workplace", "supermarket", "healthcare")
 RESIDENTIAL_CATEGORY = "residential"
-DEFAULT_CENTRAL_COUNT = DEFAULT_EXPERIMENT_CONFIG.scenario.central_count
 
 # These frequency / necessity values are chosen so that with the default
 # coefficients a=0.5 and b=0.5, the resulting POI weights are:
 # workplace=0.40, supermarket=0.35, healthcare=0.25.
-DEFAULT_POI_PROFILES: Dict[str, Dict[str, float]] = {
+FALLBACK_POI_PROFILES: Dict[str, Dict[str, float]] = {
     "workplace": {"frequency": 0.40, "necessity": 0.40},
     "supermarket": {"frequency": 0.35, "necessity": 0.35},
     "healthcare": {"frequency": 0.25, "necessity": 0.25},
 }
 
-DEFAULT_POI_AREA_PROBABILITIES: Dict[str, float] = {
+FALLBACK_POI_AREA_PROBABILITIES: Dict[str, float] = {
     "central": 0.75,
     "peripheral": 0.25,
 }
 
-DEFAULT_RESIDENTIAL_AREA_PROBABILITIES: Dict[str, float] = {
+FALLBACK_RESIDENTIAL_AREA_PROBABILITIES: Dict[str, float] = {
     "central": 0.5,
     "peripheral": 0.5,
 }
@@ -75,7 +72,7 @@ def compute_poi_weights(
         Mapping from POI category to computed POI weight.
     """
     if poi_profiles is None:
-        poi_profiles = DEFAULT_POI_PROFILES
+        poi_profiles = FALLBACK_POI_PROFILES
 
     poi_weights = {}
     for poi_type in POI_CATEGORIES:
@@ -246,11 +243,11 @@ def assign_poi_to_voronoi_cells(
 
     """
     if poi_profiles is None:
-        poi_profiles = DEFAULT_POI_PROFILES
+        poi_profiles = FALLBACK_POI_PROFILES
     if poi_area_probabilities is None:
-        poi_area_probabilities = DEFAULT_POI_AREA_PROBABILITIES
+        poi_area_probabilities = FALLBACK_POI_AREA_PROBABILITIES
     if residential_area_probabilities is None:
-        residential_area_probabilities = DEFAULT_RESIDENTIAL_AREA_PROBABILITIES
+        residential_area_probabilities = FALLBACK_RESIDENTIAL_AREA_PROBABILITIES
 
     rng = np.random.RandomState(seed)
 
@@ -474,10 +471,11 @@ def build_poi_distribution(
     partition_info: Optional[Dict[str, Any]] = None,
     hierarchy_info: Optional[Dict[str, Any]] = None,
     hierarchy_k: int = 6,
-    central_count: int = DEFAULT_CENTRAL_COUNT,
+    central_count: int = 1,
     residential_ratio: float = 0.5,
     a: float = 0.5,
     b: float = 0.5,
+    poi_profiles: Optional[Dict[str, Dict[str, float]]] = None,
     poi_count_per_type: Optional[int] = None,
     poi_area_probabilities: Optional[Dict[str, float]] = None,
     residential_area_probabilities: Optional[Dict[str, float]] = None,
@@ -504,6 +502,7 @@ def build_poi_distribution(
         residential_ratio=residential_ratio,
         a=a,
         b=b,
+        poi_profiles=poi_profiles,
         poi_count_per_type=poi_count_per_type,
         poi_area_probabilities=poi_area_probabilities,
         residential_area_probabilities=residential_area_probabilities,

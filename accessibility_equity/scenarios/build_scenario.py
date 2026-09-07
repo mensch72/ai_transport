@@ -19,15 +19,10 @@ from typing import Any, Dict, List, Optional
 
 import networkx as nx
 
-from accessibility_equity.config import DEFAULT_EXPERIMENT_CONFIG
-
 from .human_distribution import build_human_distribution
 from .network_builder import build_network
 from .poi_distribution import build_poi_distribution
 from .vehicle_distribution import build_vehicle_distribution
-
-
-_DEFAULT_SCENARIO = DEFAULT_EXPERIMENT_CONFIG.scenario
 
 
 @dataclass
@@ -60,9 +55,9 @@ class TransportScenario:
 
 
 def build_transport_scenario(
-    num_humans: int = _DEFAULT_SCENARIO.num_humans,
-    num_vehicles: int = _DEFAULT_SCENARIO.num_vehicles,
-    num_nodes: int = _DEFAULT_SCENARIO.num_nodes,
+    num_humans: int = 10,
+    num_vehicles: int = 1,
+    num_nodes: int = 6,
     seed: Optional[int] = None,
     network: Optional[nx.DiGraph] = None,
     network_kwargs: Optional[Dict[str, Any]] = None,
@@ -74,14 +69,11 @@ def build_transport_scenario(
     """
     Build a complete transport scenario before creating/resetting the env.
     """
-    effective_seed = _DEFAULT_SCENARIO.seed if seed is None else seed
+    effective_seed = 42 if seed is None else seed
     network_options = dict(network_kwargs or {})
-    network_options.setdefault(
-        "speed_mean",
-        DEFAULT_EXPERIMENT_CONFIG.mobility.edge_speed_kmh,
-    )
+    network_options.setdefault("speed_mean", 30.0)
     poi_options = dict(poi_kwargs or {})
-    poi_options.setdefault("central_count", _DEFAULT_SCENARIO.central_count)
+    poi_options.setdefault("central_count", 1)
 
     if network is None:
         network = build_network(

@@ -1,7 +1,7 @@
 defaults:
   - _self_
 
-model_dir: ???
+model_dir: outputs/2026-08-29/14-22-01
 model_filename: accessibility_equity_dqn_single_vehicle
 
 episodes: 50
@@ -15,4 +15,4 @@ hydra:
     chdir: False
   output_subdir: null
   run:
-    dir: ${model_dir}
+    dir: ${project_root:}/outputs/evaluation/${now:%Y-%m-%d}/${now:%H-%M-%S}
