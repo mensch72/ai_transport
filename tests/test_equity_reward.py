@@ -1,9 +1,10 @@
-from accessibility_equity.config import RewardConfig
+from types import SimpleNamespace
+
 from accessibility_equity.rewards.equity_reward import (
+    compute_location_based_accessibility,
     compute_population_utility,
     compute_state_utility,
 )
-from accessibility_equity.rewards.accessibility import compute_location_based_accessibility
 
 
 def test_population_utility_uses_outer_negative_sign():
@@ -75,7 +76,14 @@ def test_sum_accessibility_utility_mode_uses_total_accessibility():
         poi_weights={"workplace": 1.0, "supermarket": 0.0, "healthcare": 0.0},
         beta=0.0,
         alpha=1.0,
-        reward_config=RewardConfig(utility_mode="sum_accessibility"),
+        reward_config=SimpleNamespace(
+            utility_mode="sum_accessibility",
+            beta=1.0,
+            alpha=0.8,
+            xi=1.0,
+            eta=2.0,
+            epsilon=1e-6,
+        ),
     )
 
     assert result["total_accessibility"] == 4.0

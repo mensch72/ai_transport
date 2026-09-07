@@ -2,10 +2,27 @@
 Smoke tests for the RL wrapper.
 """
 
+from types import SimpleNamespace
+
 import numpy as np
 
-from accessibility_equity.config import RewardConfig
 from accessibility_equity.wrappers import create_transport_env
+
+
+def reward_config(**overrides):
+    defaults = {
+        "utility_mode": "equity",
+        "beta": 1.0,
+        "alpha": 0.8,
+        "xi": 1.0,
+        "eta": 2.0,
+        "epsilon": 1e-6,
+        "normalize_utility": False,
+        "clip_normalized_utility": False,
+        "normalized_reward_scale": 100.0,
+    }
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
 
 
 def test_wrapper_reset_and_step():
@@ -38,7 +55,7 @@ def test_default_reward_uses_normalized_time_integrated_utility():
         num_vehicles=1,
         num_nodes=8,
         seed=3,
-        reward_config=RewardConfig(normalize_utility=True),
+        reward_config=reward_config(normalize_utility=True),
     )
 
     env.reset(seed=3)
@@ -77,7 +94,7 @@ def test_reward_can_use_raw_time_integrated_current_state_utility():
         num_vehicles=1,
         num_nodes=8,
         seed=3,
-        reward_config=RewardConfig(normalize_utility=False),
+        reward_config=reward_config(normalize_utility=False),
     )
 
     env.reset(seed=3)

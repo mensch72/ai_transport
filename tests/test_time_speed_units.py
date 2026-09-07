@@ -1,11 +1,7 @@
 import networkx as nx
 import numpy as np
 
-from accessibility_equity.envs.transport_env import (
-    DEFAULT_HUMAN_WALKING_SPEED_KMH,
-    DEFAULT_VEHICLE_SPEED_KMH,
-    parallel_env,
-)
+from accessibility_equity.envs.transport_env import parallel_env
 from accessibility_equity.scenarios import build_transport_scenario
 
 
@@ -25,8 +21,8 @@ def test_default_speeds_use_kmh_convention():
         network=_two_node_network(length_km=1.0, vehicle_speed_kmh=30.0),
     )
 
-    assert env.agent_attributes["human_0"]["speed"] == DEFAULT_HUMAN_WALKING_SPEED_KMH
-    assert env.agent_attributes["vehicle_0"]["speed"] == DEFAULT_VEHICLE_SPEED_KMH
+    assert env.agent_attributes["human_0"]["speed"] == 3.0
+    assert env.agent_attributes["vehicle_0"]["speed"] == 30.0
 
 
 def test_generated_scenario_edges_default_to_30_kmh_vehicle_speed():
@@ -42,7 +38,7 @@ def test_generated_scenario_edges_default_to_30_kmh_vehicle_speed():
         for _u, _v, data in scenario.network.edges(data=True)
     }
 
-    assert edge_speeds == {DEFAULT_VEHICLE_SPEED_KMH}
+    assert edge_speeds == {30.0}
 
 
 def test_vehicle_travels_30_km_edge_in_one_hour():

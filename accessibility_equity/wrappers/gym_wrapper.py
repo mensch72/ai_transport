@@ -6,9 +6,8 @@ This implementation stays intentionally close to
 single-agent idea: one RL agent controls all vehicles, while humans are treated
 as part of the environment.
 
-At this stage the main project-specific extension is the default reward:
-it now uses the route-based accessibility and equity utility defined in the
-local reward modules.
+This wrapper does not define a reward algorithm itself. A reward_function must
+be provided by the training or evaluation entry point.
 """
 
 import inspect
@@ -19,21 +18,9 @@ import networkx as nx
 import numpy as np
 from gymnasium import spaces
 
-from accessibility_equity.config import (
-    DEFAULT_EXPERIMENT_CONFIG,
-    MobilityConfig,
-    RewardConfig,
-)
 from accessibility_equity.envs.transport_env import parallel_env as TransportParallelEnv
 from accessibility_equity.policies.human_policies import HumanPolicy
 from accessibility_equity.scenarios import TransportScenario, build_transport_scenario
-from accessibility_equity.rewards.equity_reward import (
-    compute_reward,
-    compute_scenario_utility_bounds,
-)
-
-
-_DEFAULT_CONFIG = DEFAULT_EXPERIMENT_CONFIG
 
 
 class TransportGymWrapper(gym.Env):
@@ -45,11 +32,11 @@ class TransportGymWrapper(gym.Env):
 
     def __init__(
         self,
-        num_humans: int = _DEFAULT_CONFIG.scenario.num_humans,
-        num_vehicles: int = _DEFAULT_CONFIG.scenario.num_vehicles,
+        num_humans: int = 10,
+        num_vehicles: int = 1,
         network: Optional[nx.DiGraph] = None,
         scenario: Optional[TransportScenario] = None,
-        num_nodes: int = _DEFAULT_CONFIG.scenario.num_nodes,
+        num_nodes: int = 6,
         scenario_seed: Optional[int] = None,
         human_speeds: Optional[List[float]] = None,
         vehicle_speeds: Optional[List[float]] = None,
@@ -67,27 +54,35 @@ class TransportGymWrapper(gym.Env):
         poi_kwargs: Optional[Dict[str, Any]] = None,
         human_distribution_kwargs: Optional[Dict[str, Any]] = None,
         vehicle_distribution_kwargs: Optional[Dict[str, Any]] = None,
-        reward_config: Optional[RewardConfig] = None,
-        mobility_config: Optional[MobilityConfig] = None,
+        reward_config: Optional[Any] = None,
+        mobility_config: Optional[Any] = None,
     ):
         super().__init__()
 
-        self.reward_config = reward_config or _DEFAULT_CONFIG.reward
-        self.mobility_config = mobility_config or _DEFAULT_CONFIG.mobility
+        self.reward_config = reward_config
+        self.mobility_config = mobility_config
+        human_walking_speed = getattr(mobility_config, "human_walking_speed_kmh", 3.0)
+        vehicle_speed = getattr(mobility_config, "vehicle_speed_kmh", 30.0)
+        edge_speed = getattr(mobility_config, "edge_speed_kmh", 30.0)
+        central_count = getattr(
+            getattr(mobility_config, "scenario", None),
+            "central_count",
+            1,
+        )
         if human_speeds is None:
-            human_speeds = [self.mobility_config.human_walking_speed_kmh] * num_humans
+            human_speeds = [human_walking_speed] * num_humans
         if vehicle_speeds is None:
-            vehicle_speeds = [self.mobility_config.vehicle_speed_kmh] * num_vehicles
+            vehicle_speeds = [vehicle_speed] * num_vehicles
         network_options = dict(network_kwargs or {})
-        network_options.setdefault("speed_mean", self.mobility_config.edge_speed_kmh)
+        network_options.setdefault("speed_mean", edge_speed)
         poi_options = dict(poi_kwargs or {})
-        poi_options.setdefault("central_count", _DEFAULT_CONFIG.scenario.central_count)
+        poi_options.setdefault("central_count", central_count)
 
         self.num_humans = num_humans
         self.num_vehicles = num_vehicles
         self.max_steps = max_steps
         self.render_mode = render_mode
-        effective_seed = _DEFAULT_CONFIG.scenario.seed if scenario_seed is None else scenario_seed
+        effective_seed = 42 if scenario_seed is None else scenario_seed
 
         if scenario is None:
             scenario = build_transport_scenario(
@@ -122,13 +117,7 @@ class TransportGymWrapper(gym.Env):
             vehicle_distribution_kwargs=vehicle_distribution_kwargs,
             human_goal_nodes=human_goal_nodes,
         )
-        self.utility_bounds = None
-        if self.reward_config.normalize_utility:
-            self.utility_bounds = compute_scenario_utility_bounds(
-                graph=scenario.network,
-                population_size=num_humans,
-                reward_config=self.reward_config,
-            )
+
 
         self.env = TransportParallelEnv(
             num_humans=num_humans,
@@ -152,12 +141,16 @@ class TransportGymWrapper(gym.Env):
         self.human_policies: Dict[str, Optional[HumanPolicy]] = {}
         self.human_current_goals: Dict[str, Optional[int]] = {}
 
-        self.reward_function = reward_function or self._default_reward_function
-        self._current_reward_state: Optional[Dict[str, Dict[str, Any]]] = None
-        self._next_reward_state: Optional[Dict[str, Dict[str, Any]]] = None
+        if reward_function is None:
+            raise ValueError(
+                "TransportGymWrapper requires an explicit reward_function. "
+                "Pass efficient_equity_reward.EquityReward(...).reward or another reward function."
+            )
+        self.reward_function = reward_function
+
+
         self._current_reward_time: float = 0.0
         self._next_reward_time: float = 0.0
-        self._last_reward_result: Optional[Dict[str, Any]] = None
         self._last_human_action_reasons: Dict[str, str] = {}
         self.last_boarding_debug_records: List[Dict[str, Any]] = []
         self.step_count = 0
@@ -335,73 +328,6 @@ class TransportGymWrapper(gym.Env):
             )
         return records
 
-    def _default_reward_function(self, obs_dict: Dict, next_obs_dict: Dict, actions_dict: Dict, current_time=None, next_time=None) -> Dict[str, float]:
-        """
-        Default reward function based on route-induced accessibility and equity utility.
-
-        The wrapper stores current and next reward states before calling this
-        function, so the default implementation can use the transition duration
-        to compute a time-integrated utility reward:
-
-            r_t = U(s_t) * delta_t
-
-        where ``delta_t`` is measured in hours.
-        """
-        _ = obs_dict, actions_dict, current_time, next_time
-
-        if self._current_reward_state is None or self._next_reward_state is None:
-            return {agent: 0.0 for agent in self.vehicle_agents}
-
-        reward_result = compute_reward(
-            graph=self.env.network,
-            current_human_to_node=self._current_reward_state["human_to_node"],
-            current_human_to_route=self._current_reward_state["human_to_route"],
-            next_human_to_node=self._next_reward_state["human_to_node"],
-            next_human_to_route=self._next_reward_state["human_to_route"],
-            reward_config=self.reward_config,
-        )
-
-        delta_t = max(
-            0.0,
-            float(self._next_reward_time) - float(self._current_reward_time),
-        )
-        current_utility = float(reward_result["current_utility"])
-        raw_time_integrated_utility = current_utility * delta_t
-        reward_result["delta_t"] = delta_t
-        reward_result["raw_time_integrated_utility"] = raw_time_integrated_utility
-
-        reward_utility = current_utility
-        normalized_utility = None
-        utility_out_of_bounds = False
-        if self.reward_config.normalize_utility:
-            lower = float(self.utility_bounds["utility_lower_bound"])
-            upper = float(self.utility_bounds["utility_upper_bound"])
-            denominator = upper - lower
-            if denominator > 0.0:
-                normalized_utility = (current_utility - lower) / denominator
-            else:
-                normalized_utility = 0.0
-            utility_out_of_bounds = normalized_utility < 0.0 or normalized_utility > 1.0
-            if self.reward_config.clip_normalized_utility:
-                normalized_utility = min(1.0, max(0.0, normalized_utility))
-            reward_utility = (
-                normalized_utility * self.reward_config.normalized_reward_scale
-            )
-            reward_result["utility_lower_bound"] = lower
-            reward_result["utility_upper_bound"] = upper
-
-        reward_result["current_normalized_utility"] = normalized_utility
-        reward_result["utility_out_of_bounds"] = utility_out_of_bounds
-        reward_result["reward"] = float(reward_utility) * delta_t
-        self._last_reward_result = reward_result
-
-        total_reward = float(reward_result["reward"])
-        if not self.vehicle_agents:
-            return {}
-
-        reward_per_vehicle = total_reward / float(len(self.vehicle_agents))
-        return {agent: reward_per_vehicle for agent in self.vehicle_agents}
-
     def _position_to_node(self, pos: Any) -> Optional[Any]:
         """Map an environment position to a representative node."""
         if pos is None:
@@ -414,63 +340,6 @@ class TransportGymWrapper(gym.Env):
             return None
         return pos
 
-    def _get_vehicle_route_nodes(self, vehicle: str) -> List[Any]:
-        """
-        Build a simple route-node representation for a vehicle from its current
-        position and destination.
-        """
-        vehicle_pos = self.env.agent_positions.get(vehicle)
-        current_node = self._position_to_node(vehicle_pos)
-        if current_node is None:
-            return []
-
-        destination = self.env.vehicle_destinations.get(vehicle)
-        if destination is None or destination == current_node:
-            return [current_node]
-
-        try:
-            route_nodes = nx.shortest_path(
-                self.env.network,
-                source=current_node,
-                target=destination,
-                weight="length",
-            )
-            return list(route_nodes)
-        except (nx.NetworkXNoPath, nx.NodeNotFound):
-            return [current_node]
-
-    def _extract_reward_state(self) -> Dict[str, Dict[str, Any]]:
-        """
-        Extract the reward-relevant human state from the underlying environment.
-
-        Each human is represented by:
-        - a current node
-        - a route, which is either the route of the boarded vehicle or the
-          singleton route at the human's current node
-        """
-        human_to_node: Dict[str, Any] = {}
-        human_to_route: Dict[str, Sequence[Any]] = {}
-
-        for human in self.human_agents:
-            human_pos = self.env.agent_positions.get(human)
-            human_node = self._position_to_node(human_pos)
-            if human_node is None:
-                continue
-
-            human_to_node[human] = human_node
-
-            aboard = self.env.human_aboard.get(human)
-            if False and aboard is not None:
-                route_nodes = self._get_vehicle_route_nodes(aboard)
-            else:
-                route_nodes = [human_node]
-
-            human_to_route[human] = route_nodes
-
-        return {
-            "human_to_node": human_to_node,
-            "human_to_route": human_to_route,
-        }
 
     def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None):
         """Reset the environment."""
@@ -496,11 +365,8 @@ class TransportGymWrapper(gym.Env):
         _ = info_dict
 
         self._init_human_policies()
-        self._current_reward_state = self._extract_reward_state()
-        self._next_reward_state = None
         self._current_reward_time = float(self.env.real_time)
         self._next_reward_time = float(self.env.real_time)
-        self._last_reward_result = None
 
         obs = self._get_observation(obs_dict)
         info = {"step_type": self.env.step_type, "real_time": self.env.real_time}
@@ -511,7 +377,6 @@ class TransportGymWrapper(gym.Env):
         self.step_count += 1
         self.last_boarding_debug_records = []
 
-        self._current_reward_state = self._extract_reward_state()
         self._current_reward_time = float(self.env.real_time)
 
         current_obs_dict = self.env._generate_observations()
@@ -536,7 +401,6 @@ class TransportGymWrapper(gym.Env):
 
         reward = 0
         if compute_reward:
-            self._next_reward_state = self._extract_reward_state()
             self._next_reward_time = float(self.env.real_time)
             next_obs_dict = self.env._generate_observations()
 
@@ -559,19 +423,6 @@ class TransportGymWrapper(gym.Env):
             "underlying_terminations": terms_dict,
             "underlying_truncations": truncs_dict,
         }
-        if self._last_reward_result is not None:
-            info["current_utility"] = self._last_reward_result["current_utility"]
-            info["next_utility"] = self._last_reward_result["next_utility"]
-            info["current_total_accessibility"] = self._last_reward_result["current_total_accessibility"]
-            info["next_total_accessibility"] = self._last_reward_result["next_total_accessibility"]
-            info["delta_t"] = self._last_reward_result["delta_t"]
-            info["time_integrated_utility"] = self._last_reward_result["reward"]
-            info["raw_time_integrated_utility"] = self._last_reward_result["raw_time_integrated_utility"]
-            info["current_normalized_utility"] = self._last_reward_result["current_normalized_utility"]
-            info["utility_out_of_bounds"] = self._last_reward_result["utility_out_of_bounds"]
-            if "utility_lower_bound" in self._last_reward_result:
-                info["utility_lower_bound"] = self._last_reward_result["utility_lower_bound"]
-                info["utility_upper_bound"] = self._last_reward_result["utility_upper_bound"]
         return obs, reward, terminated, truncated, info
 
     def _get_observation(self, obs_dict: Dict) -> Dict:
@@ -649,9 +500,9 @@ class TransportGymWrapper(gym.Env):
 
 
 def create_transport_env(
-    num_humans: int = _DEFAULT_CONFIG.scenario.num_humans,
-    num_vehicles: int = _DEFAULT_CONFIG.scenario.num_vehicles,
-    num_nodes: int = _DEFAULT_CONFIG.scenario.num_nodes,
+    num_humans: int = 10,
+    num_vehicles: int = 1,
+    num_nodes: int = 6,
     seed: Optional[int] = None,
     **kwargs,
 ) -> TransportGymWrapper:
@@ -659,12 +510,13 @@ def create_transport_env(
     Convenience function to create a transport environment with a scenario-built
     random network.
     """
-    mobility_config = kwargs.get("mobility_config") or _DEFAULT_CONFIG.mobility
+    mobility_config = kwargs.get("mobility_config")
+    edge_speed = getattr(mobility_config, "edge_speed_kmh", 30.0)
     network_kwargs = dict(kwargs.pop("network_kwargs", {}) or {})
-    network_kwargs.setdefault("speed_mean", mobility_config.edge_speed_kmh)
+    network_kwargs.setdefault("speed_mean", edge_speed)
     poi_kwargs = dict(kwargs.pop("poi_kwargs", {}) or {})
-    poi_kwargs.setdefault("central_count", _DEFAULT_CONFIG.scenario.central_count)
-    effective_seed = _DEFAULT_CONFIG.scenario.seed if seed is None else seed
+    poi_kwargs.setdefault("central_count", 1)
+    effective_seed = 42 if seed is None else seed
     scenario = build_transport_scenario(
         num_humans=num_humans,
         num_vehicles=num_vehicles,

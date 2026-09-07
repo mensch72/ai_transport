@@ -6,6 +6,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from omegaconf import OmegaConf
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -49,7 +50,8 @@ def make_env(
         randomize_initial_state=cfg.env.scenario.get(
             "randomize_initial_state", False
         ),
-        network_kwargs={"speed_mean": cfg.env.mobility.edge_speed_kmh},
+        network_kwargs=OmegaConf.to_container(cfg.env.network, resolve=True),
+        poi_kwargs=OmegaConf.to_container(cfg.env.poi, resolve=True),
         reward_config=cfg.env.reward,
         mobility_config=cfg.env.mobility,
         max_steps=cfg.dqn.max_steps,

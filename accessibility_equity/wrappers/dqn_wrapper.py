@@ -114,6 +114,7 @@ class DQNTransportWrapper(gym.Env):
         """
         mask = np.zeros(self.action_space.n, dtype=bool)
         mask[0] = True
+        #mask =[True, False, False, False, False, False, False]
 
         env = self.base_env.env
         if not self._vehicle_is_at_node():
@@ -126,7 +127,8 @@ class DQNTransportWrapper(gym.Env):
             return mask
 
         if env.step_type == "routing":
-            mask[1:] = True
+            mask[1:] = True #[True, True, True, True, True, True, True]
+
         elif env.step_type == "departing" and self.decision_mode == "routing_departing":
             for _source, target in env.network.out_edges(current_node):
                 node_index = self.node_to_index.get(target)
@@ -180,6 +182,14 @@ class DQNTransportWrapper(gym.Env):
         }
 
     def _position_to_node(self, pos: Any, edge_to_target=False) -> Optional[Any]:
+        """
+           Convert an agent position into a representative network node.
+
+           Positions are stored either as a node id, when the agent is exactly at a
+           node, or as ``((source, target), coord)``, when the agent is traveling along
+           an edge. For edge positions, return the source node by default, or the
+           target node when ``edge_to_target=True``.
+           """
         if pos is None:
             return None
         if isinstance(pos, tuple):

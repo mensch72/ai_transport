@@ -22,6 +22,8 @@ from utils import make_env, plot_training_rewards, save_training_scenario_diagno
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+if not OmegaConf.has_resolver("project_root"):
+    OmegaConf.register_new_resolver("project_root", lambda: str(PROJECT_ROOT))
 
 from accessibility_equity.wrappers import REWARD_SCALE
 from accessibility_equity.rewards.efficient_equity_reward import EquityReward
@@ -80,7 +82,7 @@ def main(cfg: DictConfig):
     if train_monitor_path.exists():
         train_monitor_path.unlink()
 
-    equity_reward = EquityReward(
+    efficient_equity_reward = EquityReward(
         cfg.env.reward.beta,
         cfg.env.reward.alpha,
         cfg.env.reward.xi,
@@ -99,12 +101,12 @@ def main(cfg: DictConfig):
         seed=cfg.env.scenario.seed,
         monitor=True,
         render_mode=None,
-        reward_function=equity_reward.reward,
+        reward_function=efficient_equity_reward.reward,
     )
 
     save_training_scenario_diagnostics(env.env, output_dir)
 
-    equity_reward.initialize(
+    efficient_equity_reward.initialize(
         env.env.base_env,
     )
 
