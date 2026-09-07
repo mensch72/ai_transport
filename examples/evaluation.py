@@ -5,13 +5,11 @@ import sys
 from typing import Optional
 
 import hydra
-from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 
 from utils import make_env
 
@@ -25,12 +23,11 @@ from accessibility_equity.wrappers.dqn_wrapper import DQNTransportWrapper
 from accessibility_equity.algorithms import MaskedDQN as DQN
 from accessibility_equity.visualization import (
     render_uniform_frames,
-    save_scenario_figure,
     save_video,
     start_video_recording,
 )
 from accessibility_equity.wrappers import REWARD_SCALE
-from accessibility_equity.heuristics import TSPVehicleAgent, GoToHumanVehicleAgent
+from accessibility_equity.policies.vehicle_heuristics import TSPVehicleAgent, GoToHumanVehicleAgent
 from accessibility_equity.rewards.efficient_equity_reward import EquityReward
 
 

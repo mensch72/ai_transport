@@ -12,7 +12,7 @@ if not OmegaConf.has_resolver("project_root"):
 
 from accessibility_equity.policies import HeuristicRoutingHumanPolicy
 from accessibility_equity.wrappers import create_dqn_env
-from accessibility_equity.heuristics import TSPVehicleAgent
+from accessibility_equity.policies.vehicle_heuristics import TSPVehicleAgent
 from accessibility_equity.rewards.efficient_equity_reward import EquityReward
 
 

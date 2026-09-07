@@ -13,7 +13,7 @@ if not OmegaConf.has_resolver("project_root"):
 
 from accessibility_equity.policies import HeuristicRoutingHumanPolicy
 from accessibility_equity.wrappers import create_dqn_env
-from accessibility_equity.heuristics import TSPVehicleAgent, GoToHumanVehicleAgent
+from accessibility_equity.policies.vehicle_heuristics import TSPVehicleAgent, GoToHumanVehicleAgent
 
 
 @hydra.main(config_path="../config", config_name="train")
