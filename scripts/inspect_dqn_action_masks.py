@@ -8,7 +8,18 @@ environment, so the masking design can be checked by eye.
 
 from __future__ import annotations
 
-from accessibility_equity.config import DEFAULT_EXPERIMENT_CONFIG
+from pathlib import Path
+import sys
+
+import hydra
+from omegaconf import DictConfig, OmegaConf
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+if not OmegaConf.has_resolver("project_root"):
+    OmegaConf.register_new_resolver("project_root", lambda: str(PROJECT_ROOT))
+
 from accessibility_equity.policies import HeuristicRoutingHumanPolicy
 from accessibility_equity.wrappers import create_dqn_env
 
@@ -68,28 +79,28 @@ def _choose_demo_action(env):
     return 0
 
 
-def main():
-    config = DEFAULT_EXPERIMENT_CONFIG
+@hydra.main(config_path="../config", config_name="train")
+def main(cfg: DictConfig):
     env = create_dqn_env(
-        num_humans=config.scenario.num_humans,
-        num_vehicles=config.scenario.num_vehicles,
-        num_nodes=config.scenario.num_nodes,
-        seed=config.scenario.seed,
-        human_speeds=[config.mobility.human_walking_speed_kmh] * config.scenario.num_humans,
-        vehicle_speeds=[config.mobility.vehicle_speed_kmh] * config.scenario.num_vehicles,
-        network_kwargs={"speed_mean": config.mobility.edge_speed_kmh},
-        poi_kwargs=config.scenario.poi_kwargs,
-        reward_config=config.reward,
-        mobility_config=config.mobility,
+        num_humans=cfg.env.scenario.num_humans,
+        num_vehicles=cfg.env.scenario.num_vehicles,
+        num_nodes=cfg.env.scenario.num_nodes,
+        seed=cfg.env.scenario.seed,
+        human_speeds=[cfg.env.mobility.human_walking_speed_kmh] * cfg.env.scenario.num_humans,
+        vehicle_speeds=[cfg.env.mobility.vehicle_speed_kmh] * cfg.env.scenario.num_vehicles,
+        network_kwargs=OmegaConf.to_container(cfg.env.network, resolve=True),
+        poi_kwargs=OmegaConf.to_container(cfg.env.poi, resolve=True),
+        reward_config=cfg.env.reward,
+        mobility_config=cfg.env.mobility,
         human_policy_class=HeuristicRoutingHumanPolicy,
         human_policy_kwargs={"p_wait": 0.5},
-        max_steps=config.dqn.max_steps,
+        max_steps=cfg.dqn.max_steps,
         use_action_masking=True,
-        decision_mode=config.dqn.decision_mode,
+        decision_mode=cfg.dqn.decision_mode,
     )
 
     try:
-        _obs, info = env.reset(seed=config.scenario.seed)
+        _obs, info = env.reset(seed=cfg.env.scenario.seed)
         print("Initial info action_mask:", info["action_mask"].astype(int).tolist())
 
         for step_index in range(12):

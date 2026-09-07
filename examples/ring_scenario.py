@@ -33,6 +33,8 @@ from evaluation import evaluate_model
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+if not OmegaConf.has_resolver("project_root"):
+    OmegaConf.register_new_resolver("project_root", lambda: str(PROJECT_ROOT))
 
 from accessibility_equity.scenarios import TransportScenario
 from accessibility_equity.wrappers import REWARD_SCALE

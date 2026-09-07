@@ -18,6 +18,8 @@ from utils import make_env
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+if not OmegaConf.has_resolver("project_root"):
+    OmegaConf.register_new_resolver("project_root", lambda: str(PROJECT_ROOT))
 
 from accessibility_equity.wrappers.dqn_wrapper import DQNTransportWrapper
 from accessibility_equity.algorithms import MaskedDQN as DQN
@@ -30,6 +32,13 @@ from accessibility_equity.visualization import (
 from accessibility_equity.wrappers import REWARD_SCALE
 from accessibility_equity.heuristics import TSPVehicleAgent, GoToHumanVehicleAgent
 from accessibility_equity.rewards.efficient_equity_reward import EquityReward
+
+
+def _project_path(path):
+    path = Path(path)
+    if path.is_absolute():
+        return path
+    return PROJECT_ROOT / path
 
 
 def _select_action(policy_name, model, env, obs):
@@ -345,7 +354,7 @@ def evaluate_model(cfg, output_dir, model, env = None):
 
 @hydra.main(config_path='../config', config_name='eval')
 def main(cfg: DictConfig):
-    output_dir = Path(cfg.model_dir)
+    output_dir = _project_path(cfg.model_dir)
 
     # Reuse the exact env/dqn config the model was trained with so the
     # evaluation environment matches the trained model. Hydra saved this
