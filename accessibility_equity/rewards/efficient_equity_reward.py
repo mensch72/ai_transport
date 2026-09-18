@@ -256,6 +256,22 @@ class EquityReward:
             return None
         return pos
 
+    def accessibility_values(self, obs):
+        vehicle_values = self._compute_vehicle_values(obs)
+        human_values = {}
+
+        for human in self.human_agents:
+            vehicle = obs[human]["human_aboard"][human]
+            if vehicle is not None and vehicle in vehicle_values:
+                value = vehicle_values[vehicle]
+            else:
+                node = self._position_to_node(obs[human]["my_position"])
+                value = self.node_values[node]
+
+            human_values[human] = max(value, self.epsilon)
+
+        return human_values, vehicle_values
+
     def _compute_utility(self, obs: Dict, vehicle_values: Dict) -> float:
         """
         Computes utility of the current state.

@@ -13,17 +13,10 @@ from scipy.spatial import Delaunay
 from pettingzoo import ParallelEnv
 from pettingzoo.utils import parallel_to_aec, wrappers
 
-from accessibility_equity.config import DEFAULT_EXPERIMENT_CONFIG
-
 logger = logging.getLogger(__name__)
 
-DEFAULT_NUM_HUMANS = DEFAULT_EXPERIMENT_CONFIG.scenario.num_humans
-DEFAULT_NUM_VEHICLES = DEFAULT_EXPERIMENT_CONFIG.scenario.num_vehicles
-DEFAULT_HUMAN_WALKING_SPEED_KMH = DEFAULT_EXPERIMENT_CONFIG.mobility.human_walking_speed_kmh
-DEFAULT_VEHICLE_SPEED_KMH = DEFAULT_EXPERIMENT_CONFIG.mobility.vehicle_speed_kmh
 
-
-def env(render_mode=None, num_humans=DEFAULT_NUM_HUMANS, num_vehicles=DEFAULT_NUM_VEHICLES, network=None,
+def env(render_mode=None, num_humans=10, num_vehicles=1, network=None,
         human_speeds=None, vehicle_speeds=None, vehicle_capacities=None, vehicle_fuel_uses=None,
         observation_scenario='full'):
     """
@@ -54,7 +47,7 @@ def env(render_mode=None, num_humans=DEFAULT_NUM_HUMANS, num_vehicles=DEFAULT_NU
     return env
 
 
-def raw_env(render_mode=None, num_humans=DEFAULT_NUM_HUMANS, num_vehicles=DEFAULT_NUM_VEHICLES, network=None,
+def raw_env(render_mode=None, num_humans=10, num_vehicles=1, network=None,
             human_speeds=None, vehicle_speeds=None, vehicle_capacities=None, vehicle_fuel_uses=None,
             observation_scenario='full'):
     """
@@ -85,8 +78,8 @@ class parallel_env(ParallelEnv):
     def __init__(
         self,
         render_mode=None,
-        num_humans=DEFAULT_NUM_HUMANS,
-        num_vehicles=DEFAULT_NUM_VEHICLES,
+        num_humans=10,
+        num_vehicles=1,
         network=None,
         human_speeds=None,
         vehicle_speeds=None,
@@ -144,12 +137,12 @@ class parallel_env(ParallelEnv):
         
         # Agent attributes - use lists if provided, otherwise use defaults
         if human_speeds is None:
-            human_speeds = [DEFAULT_HUMAN_WALKING_SPEED_KMH] * num_humans
+            human_speeds = [3.0] * num_humans
         elif len(human_speeds) != num_humans:
             raise ValueError(f"human_speeds must have length {num_humans}, got {len(human_speeds)}")
             
         if vehicle_speeds is None:
-            vehicle_speeds = [DEFAULT_VEHICLE_SPEED_KMH] * num_vehicles
+            vehicle_speeds = [30.0] * num_vehicles
         elif len(vehicle_speeds) != num_vehicles:
             raise ValueError(f"vehicle_speeds must have length {num_vehicles}, got {len(vehicle_speeds)}")
             
@@ -268,7 +261,7 @@ class parallel_env(ParallelEnv):
         # Base directed cycle (ensures strong connectivity)
         base_edges = [(0, 1), (1, 2), (2, 0)]
         for u, v in base_edges:
-            G.add_edge(u, v, length=10.0, speed=DEFAULT_VEHICLE_SPEED_KMH, capacity=10)
+            G.add_edge(u, v, length=10.0, speed=30.0, capacity=10)
 
         # Deterministically make selected cycle edges bidirectional to add variety.
         for u, v in base_edges[:2]:
@@ -278,7 +271,7 @@ class parallel_env(ParallelEnv):
         return G
     
     def create_random_2d_network(self, num_nodes=10, bidirectional_prob=0.85,
-                                 speed_mean=DEFAULT_VEHICLE_SPEED_KMH, capacity_mean=10.0, 
+                                 speed_mean=30.0, capacity_mean=10.0, 
                                  coord_mean=0.0, coord_std=10.0, seed=None):
         """
         Create a 2D random network using Delaunay triangulation.

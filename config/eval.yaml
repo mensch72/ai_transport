@@ -1,7 +1,7 @@
 defaults:
   - _self_
 
-model_dir: outputs/2026-08-29/14-22-01
+model_dir: outputs/2026-09-14/10-49-57
 model_filename: accessibility_equity_dqn_single_vehicle
 
 episodes: 50

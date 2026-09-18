@@ -3,14 +3,11 @@ import csv
 from pathlib import Path
 import sys
 from typing import Optional
-
+import json
 import hydra
 from omegaconf import DictConfig, OmegaConf
-
 import matplotlib
-
 matplotlib.use("Agg")
-
 from utils import make_env
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -87,6 +84,142 @@ def _current_vehicle_node(env):
     return env._position_to_node(position)
 
 
+def build_step_record(env, equity_reward, dqn_step, previous_state):
+    raw_env = env.base_env.env
+    human_values, vehicle_values = equity_reward.accessibility_values(raw_env._generate_observations())
+
+    record = {
+        "dqn_step": int(dqn_step),
+        "env_step": int(env.base_env.step_count),
+        "completed_phase": (
+            previous_state["next_phase"] if previous_state else None
+        ),
+        "next_phase": raw_env.step_type,
+        "sim_time_hours": float(raw_env.real_time),
+        "humans": {},
+        "vehicles": {},
+        "events": [],
+        "raw_reward": None,
+        "scaled_reward": None,
+    }
+
+    for agent in [*raw_env.human_agents, *raw_env.vehicle_agents]:
+        position = raw_env.agent_positions[agent]
+        on_edge = isinstance(position, tuple)
+        data = (
+            {"edge": position[0]}
+            if on_edge else {"node": position}
+        )
+
+        if agent in raw_env.human_agents:
+            aboard = raw_env.human_aboard.get(agent)
+            data.update(
+                state="riding" if aboard is not None else (
+                    "walking" if on_edge else "waiting"
+                ),
+                destination=raw_env.human_destinations.get(agent),
+                aboard=aboard,
+                xh=float(human_values[agent]),
+            )
+            record["humans"][agent] = data
+
+            if previous_state is not None:
+                previous_human = previous_state["humans"][agent]
+                previous_destination = previous_human.get("destination")
+
+                if (
+                    previous_destination is not None
+                    and not on_edge
+                    and position == previous_destination
+                    and previous_human.get("node") != previous_destination
+                ):
+                    record["events"].append({
+                        "type": "arrived",
+                        "human": agent,
+                        "destination": previous_destination,
+                    })
+
+                old = previous_human["aboard"]
+                if old != aboard:
+                    for event, vehicle in [
+                        ("unboarding", old), ("boarding", aboard)
+                    ]:
+                        if vehicle is not None:
+                            record["events"].append({
+                                "type": event,
+                                "human": agent,
+                                "vehicle": vehicle,
+                            })
+
+        else:
+            destination = raw_env.vehicle_destinations.get(agent)
+            data.update(
+                state="moving" if on_edge else "at_node",
+                destination=destination,
+                route_remaining=(
+                    equity_reward._compute_vehicle_route(position, destination)
+                    if destination is not None else []
+                ),
+                route_basis="reward_model",
+                passengers=[
+                    h for h in raw_env.human_agents
+                    if raw_env.human_aboard.get(h) == agent
+                ],
+                xh=float(vehicle_values[agent]),
+            )
+            record["vehicles"][agent] = data
+
+    return record
+
+def json_ready(value):
+    if hasattr(value, "tolist"):
+        value = value.tolist()
+    if isinstance(value, dict):
+        return {str(k): json_ready(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [json_ready(v) for v in value]
+    if isinstance(value, float):
+        return round(value, 2)
+    return value
+
+
+def write_agent_history(log_dir, records):
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    for group in ("humans", "vehicles"):
+        for agent in records[0][group]:
+            log_path = log_dir / f"{agent}.jsonl"
+            with log_path.open("w", encoding="utf-8") as log_file:
+                for record in records:
+                    entry = {
+                        "agent_type": group[:-1],
+                        "agent": agent,
+                        "dqn_step": record["dqn_step"],
+                        "env_step": record["env_step"],
+                        "completed_phase": record["completed_phase"],
+                        "next_phase": record["next_phase"],
+                        "sim_time_hours": record["sim_time_hours"],
+                        **record[group][agent],
+                        "events": [
+                            (
+                                "arrived"
+                                if event["type"] == "arrived"
+                                else f"{event['type']}_"
+                                     f"{event['vehicle'] if group == 'humans' else event['human']}"
+                            )
+                            for event in record["events"]
+                            if event.get(group[:-1]) == agent
+                        ],
+                        "raw_reward": record["raw_reward"],
+                        "scaled_reward": record["scaled_reward"],
+                    }
+                    log_file.write(
+                        json.dumps(
+                            json_ready(entry),
+                            ensure_ascii=False,
+                        ) + "\n"
+                    )
+
 def _run_policy_episode(
     cfg,
     policy_name,
@@ -129,16 +262,42 @@ def _run_policy_episode(
         model = GoToHumanVehicleAgent(env)
     obs, _info = env.reset(seed=cfg.env.scenario.seed)
     raw_env = env.base_env.env
+    raw_env.video_reward_calculator = equity_reward
+
+    step_log_dir = None
+    episode_step_records = []
+    previous_step_record = None
+    pending_step_records = []
+    current_dqn_step = 0
+
     if record_video:
         if video_path is None:
             raise ValueError("video_path is required when record_video=True.")
         video_path = Path(video_path)
         video_path.parent.mkdir(parents=True, exist_ok=True)
         start_video_recording(raw_env)
+
+        step_log_dir = video_path.parent / f"{video_path.stem}_logs"
+
+        previous_step_record = build_step_record(
+            env, equity_reward, dqn_step=0, previous_state=None
+        )
+        episode_step_records.append(previous_step_record)
+
     
         def _capture_auto_advance_frame(wrapper, _info):
+            nonlocal previous_step_record
+
             render_uniform_frames(wrapper.base_env.env)
-        
+            record = build_step_record(
+                env,
+                equity_reward,
+                dqn_step=current_dqn_step,
+                previous_state=previous_step_record,
+            )
+            pending_step_records.append(record)
+            previous_step_record = record
+
         env.auto_advance_callback = _capture_auto_advance_frame
 
     try:
@@ -155,11 +314,26 @@ def _run_policy_episode(
         visited_nodes = set()
         if start_node is not None:
             visited_nodes.add(start_node)
+
         while not (terminated or truncated):
+            current_dqn_step = episode_steps + 1
+            pending_step_records.clear()
+
             action_value = _select_action(policy_name, model, env, obs)
             action_counts[action_value] += 1
             obs, reward, terminated, truncated, info = env.step(action_value)
+
+            if record_video and pending_step_records:
+                # Reward belongs to the complete DQN decision, so place it on
+                # the final underlying step.
+                pending_step_records[-1]["raw_reward"] = float(
+                    info.get("raw_reward", reward)
+                )
+                pending_step_records[-1]["scaled_reward"] = float(reward)
+
+                episode_step_records.extend(pending_step_records)
             end_node = _current_vehicle_node(env)
+
             if end_node is not None:
                 visited_nodes.add(end_node)
             total_action_count += 1
@@ -192,6 +366,8 @@ def _run_policy_episode(
                 )
         if record_video:
             save_video(raw_env, filename=str(video_path), fps=video_fps)
+            write_agent_history(step_log_dir, episode_step_records)
+            print(f"Agent histories saved to '{step_log_dir}'")
     finally:
         if record_video:
             env.auto_advance_callback = None

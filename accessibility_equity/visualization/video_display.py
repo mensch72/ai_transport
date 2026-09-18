@@ -19,7 +19,7 @@ from matplotlib.lines import Line2D
 import networkx as nx
 import numpy as np
 
-from accessibility_equity.rewards.accessibility import compute_population_accessibility
+from accessibility_equity.rewards.equity_reward import compute_population_accessibility
 from accessibility_equity.visualization.scenario_plot import (
     AREA_COLORS,
     CAR_MARKER,
@@ -90,6 +90,7 @@ def initialize_video_display_artists(env: Any) -> None:
     """Initialize optional text artists used by the video overlay."""
     env._human_label_artists = {}
     env._vehicle_label_artists = {}
+    env._passenger_label_artists = {}
     env._video_summary_artist = env.fig.text(
         0.015,
         0.975,
@@ -147,6 +148,23 @@ def initialize_video_display_artists(env: Any) -> None:
                 "alpha": 0.82,
             },
         )
+        env._passenger_label_artists[vehicle] = env.ax.text(
+            0.0,
+            0.0,
+            "",
+            fontsize=7,
+            ha="center",
+            va="bottom",
+            color="#5b21b6",
+            zorder=16,
+            bbox={
+                "boxstyle": "round,pad=0.15",
+                "facecolor": "white",
+                "edgecolor": "#c4b5fd",
+                "linewidth": 0.5,
+                "alpha": 0.82,
+            },
+        )
 
 
 def human_display_state(env: Any, human: str) -> str:
@@ -164,45 +182,16 @@ def human_style(env: Any, human: str) -> Dict[str, str]:
     state = human_display_state(env, human)
     return dict(HUMAN_STATE_STYLES.get(state, HUMAN_STATE_STYLES["waiting"]))
 
-
 def compute_human_accessibility_values(env: Any) -> Dict[str, float]:
-    """
-    Compute per-human accessibility values for the current displayed state.
 
-    This mirrors the reward wrapper's lightweight state extraction so that video
-    overlays use the same accessibility definition as training diagnostics.
-    """
-    human_to_node: Dict[str, Any] = {}
-    human_to_route: Dict[str, Sequence[Any]] = {}
+    calculator = env.video_reward_calculator
+    obs = env._generate_observations()
+    human_values, _ = calculator.accessibility_values(obs)
 
-    for human in env.human_agents:
-        human_node = _position_to_node(env.agent_positions.get(human))
-        if human_node is None:
-            continue
-        human_to_node[human] = human_node
-
-        aboard = env.human_aboard.get(human)
-        if aboard is not None:
-            human_to_route[human] = _vehicle_route_nodes(env, aboard)
-        else:
-            human_to_route[human] = [human_node]
-
-    if not human_to_node:
-        return {}
-
-    try:
-        result = compute_population_accessibility(
-            graph=env.network,
-            human_to_node=human_to_node,
-            human_to_route=human_to_route,
-        )
-    except Exception:
-        return {}
     return {
         str(human): float(value)
-        for human, value in result.get("individual_values", {}).items()
+        for human, value in human_values.items()
     }
-
 
 def update_human_overlay(
     env: Any,
@@ -230,8 +219,14 @@ def update_human_overlay(
     label_artist.set_visible(True)
 
 
-def update_passenger_overlay(env: Any, vehicle: str, passengers: Sequence[str]) -> None:
-    """Style passenger markers for humans riding inside a vehicle."""
+def update_passenger_overlay(
+    env: Any,
+    vehicle: str,
+    passengers: Sequence[str],
+    xy: Tuple[float, float],
+    accessibility_values: Mapping[str, float],
+) -> None:
+    """Style passenger markers and show passenger details above a vehicle."""
     for index, human in enumerate(passengers):
         passenger_artist = env._passenger_artists.get((vehicle, index))
         if passenger_artist is None:
@@ -239,6 +234,27 @@ def update_passenger_overlay(env: Any, vehicle: str, passengers: Sequence[str]) 
         style = HUMAN_STATE_STYLES["riding"]
         passenger_artist.set_facecolor(style["facecolor"])
         passenger_artist.set_edgecolor(style["edgecolor"])
+
+    label_artist = getattr(env, "_passenger_label_artists", {}).get(vehicle)
+    if label_artist is None:
+        return
+    if not passengers:
+        label_artist.set_visible(False)
+        return
+
+    lines = []
+    for human in passengers:
+        destination = env.human_destinations.get(human)
+        destination_text = "NA" if destination is None else str(destination)
+        value = accessibility_values.get(human)
+        value_text = "NA" if value is None else f"{value:.2f}"
+        lines.append(
+            f"{human.replace('human_', 'h')} target={destination_text} X={value_text}"
+        )
+
+    label_artist.set_position((xy[0], xy[1] + 0.35))
+    label_artist.set_text("\n".join(lines))
+    label_artist.set_visible(True)
 
 
 def update_vehicle_overlay(env: Any, vehicle: str, xy: Tuple[float, float]) -> None:
@@ -254,8 +270,13 @@ def update_vehicle_overlay(env: Any, vehicle: str, xy: Tuple[float, float]) -> N
 
     destination = env.vehicle_destinations.get(vehicle)
     destination_text = "target=NA" if destination is None else f"target={destination}"
+    route = [] if destination is None else list(_vehicle_route_nodes(env, vehicle))
+    route_text = ",".join(str(node) for node in route)
     label_artist.set_position((xy[0], xy[1] - 0.35))
-    label_artist.set_text(f"{vehicle.replace('vehicle_', 'v')} {destination_text}")
+    label_artist.set_text(
+        f"{vehicle.replace('vehicle_', 'v')} {destination_text}\n"
+        f"route=[{route_text}]"
+    )
     label_artist.set_visible(True)
 
 
@@ -367,36 +388,13 @@ def update_accessibility_histogram(
 
 
 def _compute_accessibility_histogram_bounds(env: Any) -> Tuple[float, float]:
-    """Compute fixed X_h bounds from node-based accessibility values."""
-    reward_config = getattr(env, "reward_config", None)
-    beta = None if reward_config is None else getattr(reward_config, "beta", None)
-    gamma = None if reward_config is None else getattr(reward_config, "alpha", None)
-    node_values = []
-    for node in getattr(env, "network", nx.DiGraph()).nodes():
-        kwargs = {
-            "graph": env.network,
-            "human_to_node": {"human": node},
-            "human_to_route": {"human": [node]},
-        }
-        if beta is not None:
-            kwargs["beta"] = beta
-        if gamma is not None:
-            kwargs["gamma"] = gamma
-        result = compute_population_accessibility(**kwargs)
-        value = result.get("individual_values", {}).get("human")
-        if value is not None and math.isfinite(float(value)):
-            node_values.append(float(value))
-
-    if not node_values:
-        return 0.0, 1.0
-
-    x_min = min(node_values)
-    x_max = max(node_values)
-    if math.isclose(x_min, x_max):
-        padding = max(abs(x_min) * 0.05, 0.5)
-    else:
-        padding = 0.06 * (x_max - x_min)
-    return max(0.0, x_min - padding), x_max + padding
+    calculator = env.video_reward_calculator
+    values = [
+        max(float(value), calculator.epsilon)
+        for value in calculator.node_values.values()
+    ]
+    x_max = max(values, default=1.0)
+    return 0.0, max(x_max * 1.05, 1e-6)
 
 
 def _format_accessibility_histogram_axis(env: Any) -> None:
@@ -424,6 +422,9 @@ def reset_dynamic_labels(env: Any) -> None:
         label.set_text("")
         label.set_visible(False)
     for label in getattr(env, "_vehicle_label_artists", {}).values():
+        label.set_text("")
+        label.set_visible(False)
+    for label in getattr(env, "_passenger_label_artists", {}).values():
         label.set_text("")
         label.set_visible(False)
 
@@ -601,7 +602,13 @@ def render_single_frame(
                     passenger_artist.set_visible(True)
                 else:
                     passenger_artist.set_visible(False)
-        update_passenger_overlay(env, vehicle, passengers)
+        update_passenger_overlay(
+            env,
+            vehicle,
+            passengers,
+            (x, y),
+            accessibility_values,
+        )
 
         dest = env.vehicle_destinations.get(vehicle)
         dest_artist = env._destination_artists[vehicle]
@@ -1250,12 +1257,23 @@ def _position_to_node(position: Any) -> Optional[Any]:
 
 
 def _vehicle_route_nodes(env: Any, vehicle: str) -> Sequence[Any]:
-    vehicle_node = _position_to_node(env.agent_positions.get(vehicle))
+    vehicle_position = env.agent_positions.get(vehicle)
+    vehicle_node = _position_to_node(vehicle_position)
     if vehicle_node is None:
         return []
     destination = env.vehicle_destinations.get(vehicle)
     if destination is None or destination == vehicle_node:
         return [vehicle_node]
+
+    calculator = getattr(env, "video_reward_calculator", None)
+    if calculator is not None:
+        try:
+            return list(
+                calculator._compute_vehicle_route(vehicle_position, destination)
+            )
+        except (IndexError, KeyError):
+            pass
+
     try:
         return list(
             nx.shortest_path(

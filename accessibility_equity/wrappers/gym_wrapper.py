@@ -228,6 +228,7 @@ class TransportGymWrapper(gym.Env):
                         new_goal = rng.choice(nodes)
 
                     self.human_current_goals[agent] = new_goal
+                    self.env.human_destinations[agent] = new_goal
 
                     if self.human_policies[agent] is not None:
                         self.human_policies[agent].reset()
