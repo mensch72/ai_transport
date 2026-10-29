@@ -26,6 +26,7 @@ from accessibility_equity.visualization import (
 from accessibility_equity.wrappers import REWARD_SCALE
 from accessibility_equity.policies.vehicle_heuristics import TSPVehicleAgent, GoToHumanVehicleAgent
 from accessibility_equity.rewards.efficient_equity_reward import EquityReward
+from reward_analysis import plot_reward_analysis
 
 
 def _project_path(path):
@@ -306,6 +307,8 @@ def _run_policy_episode(
         episode_reward = 0.0
         raw_episode_reward = 0.0
         episode_steps = 0
+        reward_records = []  # Rewards for each decision step.
+
         action_counts = Counter()
         invalid_action_count = 0
         total_action_count = 0
@@ -321,7 +324,17 @@ def _run_policy_episode(
 
             action_value = _select_action(policy_name, model, env, obs)
             action_counts[action_value] += 1
+            step_start_time = float(raw_env.real_time)
             obs, reward, terminated, truncated, info = env.step(action_value)
+            step_end_time = float(raw_env.real_time)
+            reward_records.append({
+                "step": episode_steps + 1,
+                "start_time": step_start_time,
+                "end_time": step_end_time,
+                "delta_time": step_end_time - step_start_time,
+                "raw_reward": float(info["raw_reward"]),
+                "scaled_reward": float(reward),
+            })
 
             if record_video and pending_step_records:
                 # Reward belongs to the complete DQN decision, so place it on
@@ -384,6 +397,7 @@ def _run_policy_episode(
         "end_node": end_node,
         "unique_nodes_visited": len(visited_nodes),
         "visited_nodes": sorted(visited_nodes, key=str),
+        "reward_records": reward_records,
     }
 
 
@@ -417,6 +431,7 @@ def evaluate_model(cfg, output_dir, model, env = None):
         video_dir.mkdir(parents=True, exist_ok=True)
     policy_names = ["dqn", "random", "always_pass", "tsp", "gth"]
     for policy_name in policy_names:
+
         emit("")
         emit("-" * 70)
         emit(f"Policy: {policy_name}")
@@ -424,6 +439,8 @@ def evaluate_model(cfg, output_dir, model, env = None):
 
         episode_rewards = []
         episode_raw_rewards = []
+        policy_step_records = []
+        policy_episode_records = []
         action_counts = Counter()
         invalid_action_count = 0
         total_action_count = 0
@@ -447,6 +464,17 @@ def evaluate_model(cfg, output_dir, model, env = None):
                 video_fps=cfg.video_fps,
                 env=env
             )
+            for record in result["reward_records"]:
+                policy_step_records.append({
+                    **record,
+                    "episode": episode + 1,
+                    "global_step": len(policy_step_records) + 1,
+                })
+
+            policy_episode_records.append({
+                "episode": episode + 1,
+                "scaled_reward": result["reward"],
+            })
             episode_rewards.append(result["reward"])
             episode_raw_rewards.append(result["raw_reward"])
             action_counts.update(result["action_counts"])
@@ -488,6 +516,14 @@ def evaluate_model(cfg, output_dir, model, env = None):
                     "visited_nodes": " ".join(str(node) for node in result["visited_nodes"]),
                 }
             )
+        # Plot once after all episodes for this policy, independently of video.
+        plot_reward_analysis(
+            policy_step_records,
+            policy_episode_records,
+            output_dir / "reward_analysis" / "evaluation" / policy_name,
+            title_prefix=f"{policy_name.upper()} Evaluation",
+        )
+
         mean_reward = sum(episode_rewards) / len(episode_rewards)
         mean_raw_reward = sum(episode_raw_rewards) / len(episode_raw_rewards)
         invalid_action_rate = (
