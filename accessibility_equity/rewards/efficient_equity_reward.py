@@ -256,6 +256,25 @@ class EquityReward:
             return None
         return pos
 
+    def _walking_value_at_position(self, pos):
+        """Walking accessibility after continuing to the edge's target."""
+        if not isinstance(pos, tuple):
+            return self.node_values[pos]
+
+        edge, coord = pos
+        u, v = edge[0], edge[1]
+        remaining_distance = max(
+            self.graph[u][v]["length"] - coord, 0.0
+        )
+        remaining_cost = (
+                remaining_distance / self.human_speed * self.distance_scale
+        )
+
+        return (
+                np.exp(-self.beta * self.alpha * remaining_cost)
+                * self.node_values[v]
+        )
+
     def accessibility_values(self, obs):
         vehicle_values = self._compute_vehicle_values(obs)
         human_values = {}
@@ -265,8 +284,8 @@ class EquityReward:
             if vehicle is not None and vehicle in vehicle_values:
                 value = vehicle_values[vehicle]
             else:
-                node = self._position_to_node(obs[human]["my_position"])
-                value = self.node_values[node]
+                # account for the walking cost to get to the node
+                value = self._walking_value_at_position(obs[human]["my_position"])
 
             human_values[human] = max(value, self.epsilon)
 
@@ -292,9 +311,7 @@ class EquityReward:
             if vehicle is not None and vehicle in vehicle_values:
                 value = vehicle_values[vehicle]
             else:
-                pos = obs[human]["my_position"]
-                node = self._position_to_node(pos)
-                value = self.node_values[node]
+                value = self._walking_value_at_position(obs[human]["my_position"])
             value = max(value, self.epsilon)
             utility += value ** (-self.xi)
         utility = -(utility**self.eta)

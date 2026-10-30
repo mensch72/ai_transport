@@ -136,7 +136,7 @@ def plot_training_rewards(cfg, monitor_path, output_path):
         label=f"moving mean ({window} eps)",
     )
     ax.plot([], [], color="none", label=_utility_legend_label(cfg.env.reward))
-    ax.set_title(f"DQN Training Reward Curve (scaled x{REWARD_SCALE:g})")
+    ax.set_title("DQN Episode Reward Curve")
     ax.set_xlabel("training timesteps")
     ax.set_ylabel("scaled episode reward")
     ax.grid(True, color="#e5e7eb", linewidth=0.6)

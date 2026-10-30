@@ -13,6 +13,7 @@ from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 
 import matplotlib
+from reward_analysis import RewardAnalysisCallback
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -127,12 +128,21 @@ def main(cfg: DictConfig):
         tensorboard_log=output_dir,
     )
 
-    model.learn(total_timesteps=cfg.dqn.total_timesteps, progress_bar=True)
+    reward_callback = RewardAnalysisCallback(
+        output_dir / "reward_analysis" / "training"
+    )
+
+    model.learn(
+        total_timesteps=cfg.dqn.total_timesteps,
+        progress_bar=True,
+        callback=reward_callback,
+    )
+
     if cfg.dqn.save_model:
         model_dir.mkdir(parents=True, exist_ok=True)
         model.save(model_path)
     env.close()
-    plot_training_rewards(cfg, train_monitor_path, train_curve_path)
+    #plot_training_rewards(cfg, train_monitor_path, train_curve_path)
     if train_monitor_path.exists():
         train_monitor_path.unlink()
     if cfg.dqn.save_model:
